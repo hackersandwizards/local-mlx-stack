@@ -14,5 +14,8 @@ load_model() {
     list_models | sed 's/^/  - /' >&2
     exit 1
   fi
-  set -a; source "$file"; set +a
+  set -a
+  # shellcheck disable=SC1090  # dynamic source by design (env per model)
+  source "$file"
+  set +a
 }

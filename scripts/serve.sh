@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 load_model "${1:?usage: serve.sh <model-name>}"
 cd "$PROJECT_ROOT"
@@ -18,6 +19,8 @@ fi
     -d "{\"model\":\"$MODEL_ID\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" >/dev/null 2>&1 \
     && echo "✓ model warm" >&2
 ) &
+WARMUP_PID=$!
+trap 'kill "$WARMUP_PID" 2>/dev/null || true' EXIT
 
 echo "→ serving $MODEL_ID on http://127.0.0.1:$PORT"
 exec uv run mlx_vlm.server --model "$MODEL_ID" --host 127.0.0.1 --port "$PORT"

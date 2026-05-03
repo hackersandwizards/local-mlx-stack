@@ -21,7 +21,7 @@ pull-all:
 serve NAME="qwen3.6-35b":
     scripts/serve.sh {{NAME}}
 
-bench NAME:
+bench NAME="qwen3.6-35b":
     scripts/bench.sh {{NAME}}
 
 status:

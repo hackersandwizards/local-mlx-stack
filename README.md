@@ -14,7 +14,7 @@ Both served via `mlx_vlm.server` (handles text-only and image input). Single por
 ## Bootstrap (fresh machine)
 
 ```bash
-git clone <repo-url> ~/opt/local-mlx-stack
+# clone this repo into ~/opt/local-mlx-stack
 cd ~/opt/local-mlx-stack
 just bootstrap         # uv sync + doctor
 just pull qwen3.6-35b  # ~17.5 GB download
@@ -22,6 +22,27 @@ just serve             # → 127.0.0.1:8080
 ```
 
 Requires: `uv`, `just`, `jq`, `lsof`, `bc`, `curl` (all standard on macOS + `brew install uv just jq bc`).
+
+## Status
+
+- ✓ scaffold + `uv sync` verified on M3 Max 64 GB
+- ✓ `just doctor` all-green
+- ⏳ no model pulled yet, no server started yet — first end-to-end serve still TODO
+- ⏳ tool-call parsing through `mlx_vlm.server` for Qwen3.6 unverified (see "Tool calls" below)
+
+### Tool calls (unverified)
+
+`mlx_vlm.server` exposes OpenAI-compatible endpoints, but Qwen3 tool-call structuring through it isn't documented. After the first `just serve qwen3.6-35b`, run:
+
+```bash
+curl -s http://127.0.0.1:8080/v1/chat/completions -H 'Content-Type: application/json' -d '{
+  "model":"mlx-community/Qwen3.6-35B-A3B-4bit",
+  "messages":[{"role":"user","content":"What is the weather in Hamburg?"}],
+  "tools":[{"type":"function","function":{"name":"get_weather","parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}]
+}' | jq '.choices[0].message'
+```
+
+Pass = structured `.tool_calls` array. Fail = raw text in `.content` → fall back to `mlx-lm` for text/tools and keep `mlx-vlm` for vision only.
 
 ## Daily use
 
