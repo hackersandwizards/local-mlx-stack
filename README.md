@@ -8,11 +8,7 @@ Version-controlled local MLX inference for Apple Silicon. Serves OpenAI-compatib
 |---|---|---|---|
 | `qwen3.6-35b` | `mlx-community/Qwen3.6-35B-A3B-4bit` | ~21 GB peak | Default. Vision + text + tools. |
 
-Served via `mlx_vlm.server` (handles text-only and image input). Single port (8080), one model at a time.
-
-### Why only the 4-bit
-
-We tested both `Qwen3.6-35B-A3B-4bit` and `-8bit` end-to-end on an M3 Max 64 GB. The 8-bit costs +17 GB peak RAM and ~20 % throughput; published Unsloth data on the dense 27B sibling shows the 4↔8 perplexity gap is ~0.19 % (measurement noise). [mlx-lm #1011](https://github.com/ml-explore/mlx-lm/issues/1011) shows that flat-8bit MoE checkpoints also degrade on long multi-turn tool calls — just later than 4-bit, not absent. If real quality issues surface, the upgrade path is DWQ (`Qwen3.6-35B-A3B-4bit-DWQ`), not 8-bit. DWQ has no vision support; we keep vision in the default lane and accept the trade.
+Served via `mlx_vlm.server` (handles text-only and image input). Single port (`8080`, override with `PORT=...`), one model at a time.
 
 ## Bootstrap (fresh machine)
 
@@ -26,11 +22,10 @@ just serve             # → 127.0.0.1:8080
 
 Requires: `uv`, `just`, `jq`, `lsof`, `curl` (all standard on macOS + `brew install uv just jq`).
 
-## Verified on M3 Max 64 GB
+## On M3 Max 64 GB
 
-- ~88 tok/s steady-state on the bench prompt (after 2-iteration warmup; ~21 GB peak RAM)
-- Structured `tool_calls` dispatch via `mlx_vlm.server` works — no `mlx-lm` fallback needed
-- German, image-input (data URL), and Python code generation all pass
+- ~88 tok/s steady-state on the bench prompt; ~21 GB peak RAM
+- OpenAI-compatible: structured `tool_calls`, German, image input (data URL), code
 
 ## Daily use
 

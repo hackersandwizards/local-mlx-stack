@@ -11,19 +11,21 @@ if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   exit 1
 fi
 
+WARMUP_PAYLOAD=$(jq -nc --arg model "$MODEL_ID" \
+  '{model:$model, max_tokens:1, messages:[{role:"user", content:"hi"}]}')
+
 (
   for _ in $(seq 1 "$WARMUP_TIMEOUT_S"); do
     sleep 1
+    kill -0 "$$" 2>/dev/null || exit 0  # parent (server) gone — stop probing
     curl -fs --connect-timeout 1 --max-time 2 "http://127.0.0.1:$PORT/v1/models" >/dev/null 2>&1 || continue
-    curl -fs --connect-timeout 1 --max-time 60 "http://127.0.0.1:$PORT/v1/chat/completions" -H 'Content-Type: application/json' \
-      -d "{\"model\":\"$MODEL_ID\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" \
-      >/dev/null 2>&1 \
+    curl -fs --connect-timeout 1 --max-time 60 "http://127.0.0.1:$PORT/v1/chat/completions" \
+      -H 'Content-Type: application/json' -d "$WARMUP_PAYLOAD" >/dev/null 2>&1 \
       && echo "✓ model warm" >&2
     exit 0
   done
   echo "⚠ warmup didn't complete in ${WARMUP_TIMEOUT_S}s — first request may be slow" >&2
 ) &
-disown
 
 echo "→ serving $MODEL_ID on http://127.0.0.1:$PORT"
 exec uv run mlx_vlm.server --model "$MODEL_ID" --host 127.0.0.1 --port "$PORT"

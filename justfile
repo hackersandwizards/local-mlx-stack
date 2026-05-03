@@ -1,5 +1,5 @@
 DEFAULT_MODEL := "qwen3.6-35b"
-PORT := "8080"
+PORT := env_var_or_default("PORT", "8080")
 
 default:
     @just models
