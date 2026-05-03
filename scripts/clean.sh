@@ -7,4 +7,4 @@ if [[ ! -d "$HOME/.cache/huggingface/hub" ]]; then
   echo "(no HF cache yet; nothing to clean)"
   exit 0
 fi
-exec uv run hf cache rm "$MODEL_ID" -y
+exec uv run hf cache rm "model/$MODEL_ID" -y
