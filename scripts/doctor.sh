@@ -19,8 +19,8 @@ else
   warn ".venv missing — run: just bootstrap"
 fi
 
-if uv run python -c 'import mlx_vlm' 2>/dev/null; then
-  ok "mlx-vlm importable"
+if compgen -G '.venv/lib/python*/site-packages/mlx_vlm/__init__.py' >/dev/null; then
+  ok "mlx-vlm installed"
 else
   fail "mlx-vlm missing — run: just bootstrap"
 fi

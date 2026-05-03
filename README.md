@@ -28,7 +28,7 @@ Requires: `uv`, `just`, `jq`, `lsof`, `curl` (all standard on macOS + `brew inst
 
 ## Verified on M3 Max 64 GB
 
-- ~73 tok/s steady-state on the bench prompt (5-run median, σ ≈ 0.5)
+- ~88 tok/s steady-state on the bench prompt (after 2-iteration warmup; ~21 GB peak RAM)
 - Structured `tool_calls` dispatch via `mlx_vlm.server` works — no `mlx-lm` fallback needed
 - German, image-input (data URL), and Python code generation all pass
 

@@ -15,8 +15,8 @@ fi
 (
   for _ in $(seq 1 "$WARMUP_TIMEOUT_S"); do
     sleep 1
-    curl -fs "http://127.0.0.1:$PORT/v1/models" >/dev/null 2>&1 || continue
-    curl -fs "http://127.0.0.1:$PORT/v1/chat/completions" -H 'Content-Type: application/json' \
+    curl -fs --connect-timeout 1 --max-time 2 "http://127.0.0.1:$PORT/v1/models" >/dev/null 2>&1 || continue
+    curl -fs --connect-timeout 1 --max-time 60 "http://127.0.0.1:$PORT/v1/chat/completions" -H 'Content-Type: application/json' \
       -d "{\"model\":\"$MODEL_ID\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" \
       >/dev/null 2>&1 \
       && echo "✓ model warm" >&2

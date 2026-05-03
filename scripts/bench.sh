@@ -10,11 +10,14 @@ PROMPT="Write a 200-word technical summary of how Bloom filters work."
 PAYLOAD=$(jq -nc --arg model "$MODEL_ID" --arg p "$PROMPT" \
   '{model:$model, max_tokens:300, messages:[{role:"user", content:$p}]}')
 
-# Discard first iteration (prefill JIT, Metal shader compile, KV alloc all happen here).
-if ! curl -sf "$URL" -H 'Content-Type: application/json' -d "$PAYLOAD" >/dev/null; then
-  echo "✗ no server responding on 127.0.0.1:$PORT — run 'just serve' first" >&2
-  exit 1
-fi
+# Two warmup iterations: prefill JIT, Metal shader compile, KV alloc happen on iter 1;
+# steady-state throughput stabilizes by iter 2 (verified empirically on M3 Max).
+for _ in 1 2; do
+  if ! curl -sf "$URL" -H 'Content-Type: application/json' -d "$PAYLOAD" >/dev/null; then
+    echo "✗ no server responding on 127.0.0.1:$PORT — run 'just serve' first" >&2
+    exit 1
+  fi
+done
 
 RESP=$(curl -sf "$URL" -H 'Content-Type: application/json' -d "$PAYLOAD")
 
