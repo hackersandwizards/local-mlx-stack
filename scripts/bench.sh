@@ -12,7 +12,7 @@ PAYLOAD=$(jq -nc --arg model "$MODEL_ID" --arg p "$PROMPT" \
 # warmup: iter 1 pays prefill JIT + Metal compile + KV alloc; iter 2 reaches steady state
 for _ in 1 2; do
   if ! curl -sf "$URL" -H 'Content-Type: application/json' -d "$PAYLOAD" >/dev/null; then
-    echo "✗ no server responding on 127.0.0.1:$PORT — run 'just serve' first" >&2
+    echo "✗ no server responding on 127.0.0.1:$PORT. Run 'just serve' first." >&2
     exit 1
   fi
 done

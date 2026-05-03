@@ -10,19 +10,20 @@ fail() { echo "✗ $1"; }
 if command -v uv >/dev/null; then
   ok "uv installed"
 else
-  fail "uv missing — install: brew install uv"
+  fail "uv missing. Install: brew install uv"
 fi
 
-if [[ -d .venv ]]; then
+VENV="$SCRIPTS_DIR/../.venv"
+if [[ -d "$VENV" ]]; then
   ok ".venv present"
 else
-  warn ".venv missing — run: just bootstrap"
+  warn ".venv missing. Run: just bootstrap"
 fi
 
-if compgen -G '.venv/lib/python*/site-packages/mlx_vlm/__init__.py' >/dev/null; then
+if compgen -G "$VENV/lib/python*/site-packages/mlx_vlm/__init__.py" >/dev/null; then
   ok "mlx-vlm installed"
 else
-  fail "mlx-vlm missing — run: just bootstrap"
+  fail "mlx-vlm missing. Run: just bootstrap"
 fi
 
 bad=0
@@ -43,7 +44,7 @@ if DISK_FREE_GB=$(df -Pk "$CACHE_PARENT" | awk 'NR==2 {printf "%d", $4/1024/1024
   if (( DISK_FREE_GB >= 60 )); then
     ok "$DISK_FREE_GB GB free for HF cache"
   else
-    warn "only $DISK_FREE_GB GB free at $CACHE_PARENT — registry totals ~52 GB"
+    warn "only $DISK_FREE_GB GB free at $CACHE_PARENT. Registry needs ~21 GB."
   fi
 else
   warn "could not read disk space at $CACHE_PARENT"

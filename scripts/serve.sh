@@ -17,14 +17,14 @@ WARMUP_PAYLOAD=$(jq -nc --arg model "$MODEL_ID" \
 (
   for _ in $(seq 1 "$WARMUP_TIMEOUT_S"); do
     sleep 1
-    kill -0 "$$" 2>/dev/null || exit 0  # parent (server) gone — stop probing
+    kill -0 "$$" 2>/dev/null || exit 0  # parent (server) gone, stop probing
     curl -fs --connect-timeout 1 --max-time 2 "http://127.0.0.1:$PORT/v1/models" >/dev/null 2>&1 || continue
     curl -fs --connect-timeout 1 --max-time 60 "http://127.0.0.1:$PORT/v1/chat/completions" \
       -H 'Content-Type: application/json' -d "$WARMUP_PAYLOAD" >/dev/null 2>&1 \
       && echo "✓ model warm" >&2
     exit 0
   done
-  echo "⚠ warmup didn't complete in ${WARMUP_TIMEOUT_S}s — first request may be slow" >&2
+  echo "⚠ warmup didn't complete in ${WARMUP_TIMEOUT_S}s. First request may be slow." >&2
 ) &
 
 echo "→ serving $MODEL_ID on http://127.0.0.1:$PORT"
