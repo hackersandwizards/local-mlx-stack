@@ -84,23 +84,13 @@ def _forward_headers(headers) -> dict:
 async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
     body = await request.read()
     streaming = False
-    # Qwen3.6's chat template puts the opening `<think>` in the prompt prefix
-    # when thinking is enabled, so the model output starts INSIDE the think
-    # block and only emits `</think>` to close it. Default is enabled.
-    starts_in_think = True
     try:
-        req = json.loads(body or b"{}")
-        streaming = bool(req.get("stream", False))
-        if req.get("enable_thinking") is False:
-            starts_in_think = False
-        kw = req.get("chat_template_kwargs") or {}
-        if kw.get("enable_thinking") is False:
-            starts_in_think = False
+        streaming = bool(json.loads(body or b"{}").get("stream", False))
     except json.JSONDecodeError:
         pass
 
     def make_state() -> ThinkState:
-        return {"in_think": starts_in_think, "buffer": ""}
+        return {"in_think": False, "buffer": ""}
 
     upstream_url = f"{UPSTREAM}{request.path_qs}"
     headers = _forward_headers(request.headers)
