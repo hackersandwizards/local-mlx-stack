@@ -24,7 +24,6 @@ fi
 
 CACHE_PARENT="$HOME/.cache"
 [[ -d "$HOME/.cache/huggingface" ]] && CACHE_PARENT="$HOME/.cache/huggingface"
-# POSIX df (1K blocks) → GB; works under both BSD df and GNU coreutils df
 DISK_FREE_GB=$(df -Pk "$CACHE_PARENT" 2>/dev/null | awk 'NR==2 {printf "%d", $4/1024/1024}' || true)
 if [[ -n "${DISK_FREE_GB:-}" ]] && (( DISK_FREE_GB >= 60 )); then
   ok "$DISK_FREE_GB GB free for HF cache"

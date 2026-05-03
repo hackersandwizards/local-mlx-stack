@@ -35,7 +35,7 @@ stop:
     @pkill -f mlx_vlm.server || echo "(nothing to stop)"
 
 disk:
-    @uv run huggingface-cli scan-cache | grep -E '(mlx-community|REPO ID|TOTAL)' || true
+    @if [ -d ~/.cache/huggingface/hub ]; then uv run hf cache ls; else echo "(no HF cache yet)"; fi
 
 clean NAME:
     scripts/clean.sh {{NAME}}

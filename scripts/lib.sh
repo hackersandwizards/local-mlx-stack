@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MODELS_DIR="$PROJECT_ROOT/config/models"
+MODELS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../config/models" && pwd)"
 
 list_models() {
   find "$MODELS_DIR" -name '*.env' -exec basename {} .env \; | sort
