@@ -123,6 +123,19 @@ def strip_tool_call_xml(text: str, state: TagState) -> str:
     return outside
 
 
+def make_state(inside: bool = False) -> TagState:
+    return {"inside": inside, "buffer": ""}
+
+
+def rewrite_content(text: str, think_state: TagState, strip_state: TagState) -> tuple[str, str]:
+    """Apply both content rewrites in the order they must run: extract
+    `<think>` into reasoning, then drop `<tool_call>` XML from what
+    remains. Both passes carry per-choice state across streamed chunks."""
+    content, reasoning = split_chunk(text, think_state)
+    content = strip_tool_call_xml(content, strip_state)
+    return content, reasoning
+
+
 def _normalize_usage(obj: dict) -> None:
     """Rename mlx-vlm's Anthropic-style usage keys to OpenAI's. Zed's
     `Usage` struct requires `prompt_tokens` and `completion_tokens` as
@@ -222,12 +235,6 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
     except json.JSONDecodeError:
         pass
 
-    def make_think_state() -> TagState:
-        return {"inside": starts_in_think, "buffer": ""}
-
-    def make_strip_state() -> TagState:
-        return {"inside": False, "buffer": ""}
-
     session = request.app[SESSION]
     upstream_path, hide_reasoning = _strip_quiet(request.path_qs)
     upstream_url = f"{UPSTREAM}{upstream_path}"
@@ -241,8 +248,9 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
                 text = msg.get("content") or ""
                 if not text:
                     continue
-                new_content, reasoning = split_chunk(text, make_think_state())
-                new_content = strip_tool_call_xml(new_content, make_strip_state())
+                new_content, reasoning = rewrite_content(
+                    text, make_state(starts_in_think), make_state()
+                )
                 msg["content"] = new_content
                 if reasoning and not hide_reasoning:
                     msg["reasoning_content"] = reasoning
@@ -259,8 +267,8 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
         )
         await response.prepare(request)
 
-        think_states: dict[int, TagState] = defaultdict(make_think_state)
-        strip_states: dict[int, TagState] = defaultdict(make_strip_state)
+        think_states: dict[int, TagState] = defaultdict(lambda: make_state(starts_in_think))
+        strip_states: dict[int, TagState] = defaultdict(make_state)
         first_chunk_sent = False
         line_buffer = b""
         async for chunk in upstream.content.iter_any():
@@ -289,8 +297,9 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
                     if text is None:
                         continue
                     idx = choice.get("index", 0)
-                    new_content, reasoning = split_chunk(text, think_states[idx])
-                    new_content = strip_tool_call_xml(new_content, strip_states[idx])
+                    new_content, reasoning = rewrite_content(
+                        text, think_states[idx], strip_states[idx]
+                    )
                     delta["content"] = new_content
                     if reasoning and not hide_reasoning:
                         delta["reasoning_content"] = reasoning
