@@ -12,6 +12,13 @@ Listens on :8081 (override with PORT), forwards to UPSTREAM
      `_normalize_usage`, `_is_noop_delta`, `_format_chunk`, and
      `_split_mixed_delta` for the per-issue rationale.
 
+A second mount under `/quiet/*` runs the same extraction but drops
+`reasoning_content` instead of emitting it. The model still thinks
+(`enable_thinking=true` is injected regardless), the client just doesn't
+see thinking deltas — for harnesses like opencode whose openai-compatible
+adapter renders one "Thinking:" line per delta and has no opt-out
+(anomalyco/opencode#10470).
+
 Other paths pass through.
 """
 from __future__ import annotations
@@ -42,6 +49,16 @@ SSE_PREFIX = b"data: "
 SOCKET_READ_TIMEOUT_S = 600
 
 SESSION = web.AppKey("session", aiohttp.ClientSession)
+
+QUIET_PREFIX = "/quiet"
+
+
+def _strip_quiet(path_qs: str) -> tuple[str, bool]:
+    """If `path_qs` starts with `/quiet`, strip it and signal hide_reasoning.
+    Returns (upstream_path, hide_reasoning). Empty paths normalize to "/"."""
+    if path_qs.startswith(QUIET_PREFIX):
+        return path_qs[len(QUIET_PREFIX):] or "/", True
+    return path_qs, False
 
 
 def _partial_tag_suffix_len(text: str, tag: str) -> int:
@@ -189,7 +206,8 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
         return {"in_think": starts_in_think, "buffer": ""}
 
     session = request.app[SESSION]
-    upstream_url = f"{UPSTREAM}{request.path_qs}"
+    upstream_path, hide_reasoning = _strip_quiet(request.path_qs)
+    upstream_url = f"{UPSTREAM}{upstream_path}"
     headers = _forward_headers(request.headers)
 
     async with session.post(upstream_url, data=body, headers=headers) as upstream:
@@ -203,7 +221,7 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
                 state = make_state()
                 new_content, reasoning = split_chunk(text, state)
                 msg["content"] = new_content
-                if reasoning:
+                if reasoning and not hide_reasoning:
                     msg["reasoning_content"] = reasoning
             _normalize_usage(data)
             return web.json_response(data, status=upstream.status)
@@ -244,7 +262,7 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
                         continue
                     new_content, reasoning = split_chunk(text, states[choice.get("index", 0)])
                     delta["content"] = new_content
-                    if reasoning:
+                    if reasoning and not hide_reasoning:
                         delta["reasoning_content"] = reasoning
                 _normalize_usage(obj)
                 chunk_bytes = _format_chunk(obj, first_chunk_sent)
@@ -262,7 +280,8 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
 async def _passthrough(request: web.Request) -> web.StreamResponse:
     body = await request.read() if request.can_read_body else None
     session = request.app[SESSION]
-    upstream_url = f"{UPSTREAM}{request.path_qs}"
+    upstream_path, _ = _strip_quiet(request.path_qs)
+    upstream_url = f"{UPSTREAM}{upstream_path}"
     headers = _forward_headers(request.headers)
 
     async with session.request(request.method, upstream_url, data=body, headers=headers) as upstream:
@@ -295,6 +314,7 @@ def main() -> None:
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)
     app.router.add_post("/v1/chat/completions", _proxy_chat_completions)
+    app.router.add_post("/quiet/v1/chat/completions", _proxy_chat_completions)
     app.router.add_route("*", "/{tail:.*}", _passthrough)
     print(f"→ proxy on http://127.0.0.1:{PORT} → {UPSTREAM}", file=sys.stderr)
     web.run_app(app, host="127.0.0.1", port=PORT, access_log=None, print=lambda _: None)

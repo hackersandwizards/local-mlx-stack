@@ -55,6 +55,16 @@ Qwen3.6's chat template puts the opening `<think>` in the prompt prefix when thi
 
 Drop the proxy when [Blaizzy/mlx-vlm#786](https://github.com/Blaizzy/mlx-vlm/issues/786) lands and mlx_vlm gains native `reasoning_content` extraction.
 
+### Quiet route (hide reasoning per-client)
+
+The proxy also serves `/quiet/v1/chat/completions`. Same model behavior — `enable_thinking=true` is still injected, the model still thinks — but `reasoning_content` is dropped before being emitted. Use it for harnesses that render reasoning awkwardly (one "Thinking:" line per token) and have no client-side opt-out, e.g. opencode ([anomalyco/opencode#10470](https://github.com/anomalyco/opencode/issues/10470)).
+
+| Client | Endpoint |
+|---|---|
+| pi-mono | `http://127.0.0.1:8081/v1` |
+| Zed | `http://127.0.0.1:8081/v1` (renders reasoning as a collapsible "Thinking" block) |
+| opencode | `http://127.0.0.1:8081/quiet/v1` |
+
 ## Cleanup
 
 ```bash
