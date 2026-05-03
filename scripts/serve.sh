@@ -4,19 +4,24 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 load_model "${1:?usage: serve.sh <model-name>}"
 
+PORT=8080
+WARMUP_TIMEOUT_S=180  # 8-bit (~35 GB) cold-load from disk can exceed 2 min on M3 Max
+
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "✗ port $PORT already in use. Run 'just stop' or pick another port." >&2
   exit 1
 fi
 
 (
-  for _ in {1..30}; do
+  for _ in $(seq 1 "$WARMUP_TIMEOUT_S"); do
     sleep 1
-    curl -s "http://127.0.0.1:$PORT/v1/models" >/dev/null 2>&1 && break
+    curl -fs "http://127.0.0.1:$PORT/v1/models" >/dev/null 2>&1 || continue
+    curl -fs "http://127.0.0.1:$PORT/v1/chat/completions" -H 'Content-Type: application/json' \
+      -d "{\"model\":\"$MODEL_ID\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" \
+      >/dev/null 2>&1 \
+      && echo "✓ model warm" >&2
+    exit 0
   done
-  curl -s "http://127.0.0.1:$PORT/v1/chat/completions" -H 'Content-Type: application/json' \
-    -d "{\"model\":\"$MODEL_ID\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" >/dev/null 2>&1 \
-    && echo "✓ model warm" >&2
 ) &
 disown
 

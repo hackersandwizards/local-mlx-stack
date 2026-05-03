@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
-MODELS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../config/models" && pwd)"
+SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MODELS_DIR="$SCRIPTS_DIR/../config/models"
 
-list_models() {
-  find "$MODELS_DIR" -name '*.env' -exec basename {} .env \; | sort
-}
+list_models() { "$SCRIPTS_DIR/list.sh"; }
 
 load_model() {
   local name="$1"

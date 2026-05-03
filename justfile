@@ -9,14 +9,13 @@ doctor:
     @scripts/doctor.sh
 
 models:
-    @find config/models -name '*.env' -exec basename {} .env \; | sort | sed 's/^/  - /'
+    @scripts/list.sh | sed 's/^/  - /'
 
 pull NAME:
     scripts/pull.sh {{NAME}}
 
 pull-all:
-    @for m in $(find config/models -name '*.env' -exec basename {} .env \;); do \
-      scripts/pull.sh $$m; done
+    @scripts/list.sh | xargs -n1 scripts/pull.sh
 
 serve NAME="qwen3.6-35b":
     scripts/serve.sh {{NAME}}
@@ -41,8 +40,7 @@ clean NAME:
     scripts/clean.sh {{NAME}}
 
 clean-all:
-    @for m in $(find config/models -name '*.env' -exec basename {} .env \;); do \
-      scripts/clean.sh $$m; done
+    @scripts/list.sh | xargs -n1 scripts/clean.sh
 
 clean-cache:
     @echo "This will delete ~/.cache/huggingface/hub entirely (all HF models, not just our registry)."
