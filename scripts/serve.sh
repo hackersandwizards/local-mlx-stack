@@ -6,7 +6,7 @@ load_model "${1:?usage: serve.sh <model-name>}"
 
 WARMUP_TIMEOUT_S=90  # 4-bit (~21 GB) cold-load completes in ~30 s on M3 Max; 90 s is generous headroom
 
-if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+if port_in_use "$PORT"; then
   echo "✗ port $PORT already in use. Run 'just stop' or pick another port." >&2
   exit 1
 fi

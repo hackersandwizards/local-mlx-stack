@@ -50,8 +50,11 @@ else
   warn "could not read disk space at $CACHE_PARENT"
 fi
 
-if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-  warn "port $PORT in use"
-else
-  ok "port $PORT free"
-fi
+PROXY_PORT="${PROXY_PORT:-8081}"
+for p in "$PORT" "$PROXY_PORT"; do
+  if port_in_use "$p"; then
+    warn "port $p in use"
+  else
+    ok "port $p free"
+  fi
+done

@@ -3,6 +3,10 @@ SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODELS_DIR="$SCRIPTS_DIR/../config/models"
 PORT="${PORT:-8080}"
 
+port_in_use() {
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+}
+
 load_model() {
   local name="$1"
   local file="$MODELS_DIR/$name.env"

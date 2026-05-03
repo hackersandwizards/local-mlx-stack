@@ -11,9 +11,16 @@ from __future__ import annotations
 import json
 import os
 import sys
+from collections import defaultdict
+from typing import TypedDict
 
 import aiohttp
 from aiohttp import web
+
+
+class ThinkState(TypedDict):
+    in_think: bool
+    buffer: str
 
 UPSTREAM = os.environ.get("UPSTREAM", "http://127.0.0.1:8080")
 PORT = int(os.environ.get("PORT", "8081"))
@@ -35,7 +42,7 @@ def _partial_tag_suffix_len(text: str, tag: str) -> int:
     return 0
 
 
-def split_chunk(text: str, state: dict) -> tuple[str, str]:
+def split_chunk(text: str, state: ThinkState) -> tuple[str, str]:
     """Split `text` into (content, reasoning) using `<think>` tags.
 
     `state` carries `in_think` and `buffer` across calls so a tag split
@@ -92,7 +99,7 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
     except json.JSONDecodeError:
         pass
 
-    def make_state() -> dict:
+    def make_state() -> ThinkState:
         return {"in_think": starts_in_think, "buffer": ""}
 
     upstream_url = f"{UPSTREAM}{request.path_qs}"
@@ -125,40 +132,37 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
             )
             await response.prepare(request)
 
-            states: dict[int, dict] = {}
+            states: dict[int, ThinkState] = defaultdict(make_state)
             line_buffer = b""
             async for chunk in upstream.content.iter_any():
                 line_buffer += chunk
+                # Coalesce all rewritten lines from this upstream chunk into one
+                # write, so we don't pay an await + flush per SSE event.
+                out = bytearray()
                 while b"\n" in line_buffer:
                     raw_line, line_buffer = line_buffer.split(b"\n", 1)
                     line = raw_line.decode("utf-8", errors="replace").rstrip("\r")
                     if not line.startswith("data: "):
-                        await response.write(raw_line + b"\n")
-                        continue
-                    payload = line[len("data: "):]
-                    if payload == "[DONE]":
-                        await response.write(b"data: [DONE]\n")
+                        out += raw_line + b"\n"
                         continue
                     try:
-                        obj = json.loads(payload)
+                        obj = json.loads(line[len("data: "):])
                     except json.JSONDecodeError:
-                        await response.write(raw_line + b"\n")
+                        # Covers `[DONE]` and any other non-JSON payload mlx-vlm emits.
+                        out += raw_line + b"\n"
                         continue
                     for choice in obj.get("choices", []):
-                        idx = choice.get("index", 0)
                         delta = choice.get("delta") or {}
                         text = delta.get("content")
                         if text is None:
                             continue
-                        if idx not in states:
-                            states[idx] = make_state()
-                        state = states[idx]
-                        new_content, reasoning = split_chunk(text, state)
+                        new_content, reasoning = split_chunk(text, states[choice.get("index", 0)])
                         delta["content"] = new_content
                         if reasoning:
                             delta["reasoning_content"] = reasoning
-                    out = "data: " + json.dumps(obj, separators=(",", ":")) + "\n"
-                    await response.write(out.encode("utf-8"))
+                    out += b"data: " + json.dumps(obj, separators=(",", ":")).encode("utf-8") + b"\n"
+                if out:
+                    await response.write(bytes(out))
             if line_buffer:
                 await response.write(line_buffer)
             await response.write_eof()
