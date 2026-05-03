@@ -8,7 +8,11 @@ Listens on :8081 (override with PORT), forwards to UPSTREAM
      defaults thinking off; standard OpenAI clients don't know to opt in).
   2. Extracts `<think>...</think>` from `content` into `reasoning_content`
      for both streaming and non-streaming responses.
-  3. Rewrites SSE events for Zed/opencode/pi-mono compatibility — see
+  3. Strips `<tool_call>...</tool_call>` Qwen-XML from `content`. mlx-vlm
+     streaming emits the structured `tool_calls` delta correctly AND
+     duplicates the raw XML into `content`; the XML is noise the client
+     already has parsed. Verified on Qwen3.6-35B-A3B-4bit.
+  4. Rewrites SSE events for Zed/opencode/pi-mono compatibility — see
      `_normalize_usage`, `_is_noop_delta`, `_format_chunk`, and
      `_split_mixed_delta` for the per-issue rationale.
 
@@ -33,15 +37,17 @@ import aiohttp
 from aiohttp import web
 
 
-class ThinkState(TypedDict):
-    in_think: bool
+class TagState(TypedDict):
+    inside: bool
     buffer: str
 
 UPSTREAM = os.environ.get("UPSTREAM", "http://127.0.0.1:8080")
 PORT = int(os.environ.get("PORT", "8081"))
 
-TAG_OPEN = "<think>"
-TAG_CLOSE = "</think>"
+TAG_THINK_OPEN = "<think>"
+TAG_THINK_CLOSE = "</think>"
+TAG_TOOL_CALL_OPEN = "<tool_call>"
+TAG_TOOL_CALL_CLOSE = "</tool_call>"
 
 SSE_PREFIX = b"data: "
 
@@ -71,29 +77,27 @@ def _partial_tag_suffix_len(text: str, tag: str) -> int:
     return 0
 
 
-def split_chunk(text: str, state: ThinkState) -> tuple[str, str]:
-    """Split `text` into (content, reasoning) using `<think>` tags.
+def _split_by_tags(text: str, state: TagState, open_tag: str, close_tag: str) -> tuple[str, str]:
+    """Split `text` into (outside, inside) using `open_tag` / `close_tag`.
 
-    `state` carries `in_think` and `buffer` across calls so a tag split
+    `state` carries `inside` and `buffer` across calls so a tag split
     across two streamed chunks is still detected. Mutated in place.
     """
     text = state["buffer"] + text
     state["buffer"] = ""
-    content_parts: list[str] = []
-    reasoning_parts: list[str] = []
+    outside_parts: list[str] = []
+    inside_parts: list[str] = []
     pos = 0
     while pos < len(text):
-        if state["in_think"]:
-            target, sink = TAG_CLOSE, reasoning_parts
-            on_found = False
+        if state["inside"]:
+            target, sink, on_found = close_tag, inside_parts, False
         else:
-            target, sink = TAG_OPEN, content_parts
-            on_found = True
+            target, sink, on_found = open_tag, outside_parts, True
         idx = text.find(target, pos)
         if idx >= 0:
             sink.append(text[pos:idx])
             pos = idx + len(target)
-            state["in_think"] = on_found
+            state["inside"] = on_found
             continue
         tail = text[pos:]
         hold = _partial_tag_suffix_len(tail, target)
@@ -103,7 +107,20 @@ def split_chunk(text: str, state: ThinkState) -> tuple[str, str]:
         else:
             sink.append(tail)
         pos = len(text)
-    return "".join(content_parts), "".join(reasoning_parts)
+    return "".join(outside_parts), "".join(inside_parts)
+
+
+def split_chunk(text: str, state: TagState) -> tuple[str, str]:
+    """Split `text` into (content, reasoning) using `<think>` tags."""
+    return _split_by_tags(text, state, TAG_THINK_OPEN, TAG_THINK_CLOSE)
+
+
+def strip_tool_call_xml(text: str, state: TagState) -> str:
+    """Drop `<tool_call>...</tool_call>` blocks from text. mlx-vlm streaming
+    duplicates the parsed call as raw Qwen-XML in `content`; clients render
+    it as text alongside the structured tool-call card."""
+    outside, _ = _split_by_tags(text, state, TAG_TOOL_CALL_OPEN, TAG_TOOL_CALL_CLOSE)
+    return outside
 
 
 def _normalize_usage(obj: dict) -> None:
@@ -123,10 +140,11 @@ def _normalize_usage(obj: dict) -> None:
 def _is_noop_delta(obj: dict) -> bool:
     """A chunk is a no-op when no choice carries content, reasoning,
     tool_calls, or finish_reason. mlx-vlm emits these for held-back
-    tokens (split_chunk buffering a partial `</think>`) and for filler
-    updates that only bump usage. We deliberately don't check `role` —
-    mlx-vlm stamps `role:"assistant"` onto every chunk, so checking it
-    would never drop anything."""
+    tokens (split_chunk or strip_tool_call_xml buffering a partial tag),
+    for content deltas fully consumed by the tool-call XML stripper, and
+    for filler updates that only bump usage. We deliberately don't check
+    `role` — mlx-vlm stamps `role:"assistant"` onto every chunk, so
+    checking it would never drop anything."""
     for ch in obj.get("choices", []):
         if ch.get("finish_reason") is not None:
             return False
@@ -204,8 +222,11 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
     except json.JSONDecodeError:
         pass
 
-    def make_state() -> ThinkState:
-        return {"in_think": starts_in_think, "buffer": ""}
+    def make_think_state() -> TagState:
+        return {"inside": starts_in_think, "buffer": ""}
+
+    def make_strip_state() -> TagState:
+        return {"inside": False, "buffer": ""}
 
     session = request.app[SESSION]
     upstream_path, hide_reasoning = _strip_quiet(request.path_qs)
@@ -220,8 +241,8 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
                 text = msg.get("content") or ""
                 if not text:
                     continue
-                state = make_state()
-                new_content, reasoning = split_chunk(text, state)
+                new_content, reasoning = split_chunk(text, make_think_state())
+                new_content = strip_tool_call_xml(new_content, make_strip_state())
                 msg["content"] = new_content
                 if reasoning and not hide_reasoning:
                     msg["reasoning_content"] = reasoning
@@ -238,7 +259,8 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
         )
         await response.prepare(request)
 
-        states: dict[int, ThinkState] = defaultdict(make_state)
+        think_states: dict[int, TagState] = defaultdict(make_think_state)
+        strip_states: dict[int, TagState] = defaultdict(make_strip_state)
         first_chunk_sent = False
         line_buffer = b""
         async for chunk in upstream.content.iter_any():
@@ -266,7 +288,9 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
                     text = delta.get("content")
                     if text is None:
                         continue
-                    new_content, reasoning = split_chunk(text, states[choice.get("index", 0)])
+                    idx = choice.get("index", 0)
+                    new_content, reasoning = split_chunk(text, think_states[idx])
+                    new_content = strip_tool_call_xml(new_content, strip_states[idx])
                     delta["content"] = new_content
                     if reasoning and not hide_reasoning:
                         delta["reasoning_content"] = reasoning
