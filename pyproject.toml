@@ -1,0 +1,10 @@
+[project]
+name = "local-mlx-stack"
+version = "0.1.0"
+description = "Version-controlled local MLX inference stack for Apple Silicon"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "mlx-vlm",
+    "torchvision",
+    "huggingface_hub[cli]>=0.26",
+]
