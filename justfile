@@ -12,6 +12,9 @@ bootstrap:
 doctor:
     @scripts/doctor.sh
 
+test:
+    uv run --group dev pytest
+
 models:
     @scripts/list.sh | sed 's/^/  - /'
 

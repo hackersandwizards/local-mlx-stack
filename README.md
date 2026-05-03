@@ -38,6 +38,7 @@ just stop              # kill any mlx_vlm.server
 just disk              # HF cache footprint
 just proxy             # reasoning-extraction proxy on :8081 (foreground)
 just stop-proxy        # kill any running proxy
+just test              # run the proxy unit tests (pytest)
 ```
 
 Note: `just status` reflects what the running server advertises at `/v1/models`. With `mlx_vlm.server --model X`, that's typically just `X`. The HF cache may hold more models than the live server exposes; use `just disk` to inspect cached weights.
@@ -52,6 +53,7 @@ Qwen3.6's chat template puts the opening `<think>` in the prompt prefix when thi
 - Point harnesses at `http://127.0.0.1:8081/v1` instead of `:8080`
 - Override port: `PROXY_PORT=9090 just proxy`
 - Re-points upstream: `PORT=9000 just proxy` (proxies to `:9000`)
+- Verbose logging: `PROXY_LOG_LEVEL=DEBUG just proxy` (default `INFO`; upstream errors are logged at `WARNING`)
 
 Drop the proxy when [Blaizzy/mlx-vlm#786](https://github.com/Blaizzy/mlx-vlm/issues/786) lands and mlx_vlm gains native `reasoning_content` extraction.
 
