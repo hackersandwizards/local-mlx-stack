@@ -2,9 +2,15 @@
 """Reasoning-extraction proxy for mlx_vlm.server.
 
 Listens on :8081 (override with PORT), forwards to UPSTREAM
-(default http://127.0.0.1:8080). For /v1/chat/completions, extracts
-<think>...</think> from `content` into `reasoning_content` for both
-streaming and non-streaming responses. Other paths pass through.
+(default http://127.0.0.1:8080). For /v1/chat/completions:
+
+  1. Injects `enable_thinking=true` if the client didn't set it (mlx-vlm
+     defaults thinking off; standard OpenAI clients don't know to opt in).
+  2. Extracts `<think>...</think>` from `content` into `reasoning_content`
+     for both streaming and non-streaming responses, so harnesses with
+     native reasoning UIs (Zed, pi, opencode) work cleanly.
+
+Other paths pass through.
 """
 from __future__ import annotations
 
@@ -86,13 +92,18 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
     streaming = False
     # mlx-vlm's chat template prepends `<think>\n` to the assistant turn when
     # enable_thinking is true, so the streamed output starts INSIDE the think
-    # block and the model only emits `</think>` to close it. mlx-vlm defaults
-    # enable_thinking to False — match that here.
-    starts_in_think = False
+    # block and the model only emits `</think>` to close it. Inject the flag
+    # if the client didn't set it — that's what makes harnesses like Zed,
+    # pi, and opencode actually see reasoning through this proxy.
+    starts_in_think = True
     try:
         req = json.loads(body or b"{}")
-        streaming = bool(req.get("stream", False))
-        starts_in_think = bool(req.get("enable_thinking", False))
+        if isinstance(req, dict):
+            streaming = bool(req.get("stream", False))
+            if "enable_thinking" not in req:
+                req["enable_thinking"] = True
+                body = json.dumps(req).encode("utf-8")
+            starts_in_think = bool(req["enable_thinking"])
     except json.JSONDecodeError:
         pass
 
