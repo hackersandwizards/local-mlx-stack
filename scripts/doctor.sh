@@ -27,8 +27,7 @@ fi
 
 bad=0
 while read -r name; do
-  # shellcheck disable=SC1090  # dynamic source by design (env per model)
-  id=$(MODEL_ID=""; source "$MODELS_DIR/$name.env"; echo "$MODEL_ID")
+  id=$(load_model "$name" >/dev/null && echo "$MODEL_ID")
   if [[ "$id" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
     ok "model '$name' → $id"
   else
@@ -50,8 +49,8 @@ else
   warn "could not read disk space at $CACHE_PARENT"
 fi
 
-if lsof -nP -iTCP:8080 -sTCP:LISTEN >/dev/null 2>&1; then
-  warn "port 8080 in use"
+if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  warn "port $PORT in use"
 else
-  ok "port 8080 free"
+  ok "port $PORT free"
 fi

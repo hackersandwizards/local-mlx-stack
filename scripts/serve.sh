@@ -4,7 +4,6 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 load_model "${1:?usage: serve.sh <model-name>}"
 
-PORT=8080
 WARMUP_TIMEOUT_S=90  # 4-bit (~21 GB) cold-load completes in ~30 s on M3 Max; 90 s is generous headroom
 
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then

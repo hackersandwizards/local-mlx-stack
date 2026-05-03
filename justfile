@@ -1,3 +1,6 @@
+DEFAULT_MODEL := "qwen3.6-35b"
+PORT := "8080"
+
 default:
     @just models
 
@@ -17,17 +20,17 @@ pull NAME:
 pull-all:
     @scripts/list.sh | xargs -n1 scripts/pull.sh
 
-serve NAME="qwen3.6-35b":
+serve NAME=DEFAULT_MODEL:
     scripts/serve.sh {{NAME}}
 
-bench NAME="qwen3.6-35b":
+bench NAME=DEFAULT_MODEL:
     scripts/bench.sh {{NAME}}
 
 status:
-    @if RESP=$(curl -sf http://127.0.0.1:8080/v1/models 2>/dev/null); then \
+    @if RESP=$(curl -sf http://127.0.0.1:{{PORT}}/v1/models 2>/dev/null); then \
       echo "$RESP" | jq -r '.data[].id'; \
     else \
-      echo "(no server running on :8080)"; \
+      echo "(no server running on :{{PORT}})"; \
     fi
 
 stop:
@@ -44,6 +47,6 @@ clean-all:
 
 clean-cache:
     @echo "This will delete ~/.cache/huggingface/hub entirely (all HF models, not just our registry)."
-    @read -p "Type 'yes' to continue: " confirm && [ "$$confirm" = "yes" ]
+    @read -rp "Type 'yes' to continue: " confirm && [ "$$confirm" = "yes" ]
     rm -rf ~/.cache/huggingface/hub
     @echo "✓ HF cache cleared"
