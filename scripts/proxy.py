@@ -190,7 +190,9 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
     # block and the model only emits `</think>` to close it. Inject the flag
     # if the client didn't set it — that's what makes harnesses like Zed,
     # pi, and opencode actually see reasoning through this proxy.
-    starts_in_think = True
+    # Default False: if body parse fails we forward unchanged, mlx-vlm runs
+    # with thinking off (its default), and output won't start in `<think>`.
+    starts_in_think = False
     try:
         req = json.loads(body or b"{}")
         if isinstance(req, dict):
@@ -241,11 +243,15 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
         line_buffer = b""
         async for chunk in upstream.content.iter_any():
             line_buffer += chunk
-            # Coalesce all rewritten lines from this upstream chunk into one
-            # write, so we don't pay an await + flush per SSE event.
+            if b"\n" not in line_buffer:
+                continue
+            # One split per upstream chunk; the trailing partial line (if any)
+            # carries forward. Coalesce all rewritten lines into one write,
+            # so we don't pay an await + flush per SSE event.
+            lines = line_buffer.split(b"\n")
+            line_buffer = lines.pop()
             out = bytearray()
-            while b"\n" in line_buffer:
-                raw_line, line_buffer = line_buffer.split(b"\n", 1)
+            for raw_line in lines:
                 if not raw_line.startswith(SSE_PREFIX):
                     out += raw_line + b"\n"
                     continue
@@ -270,7 +276,7 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
                     out += chunk_bytes
                     first_chunk_sent = True
             if out:
-                await response.write(bytes(out))
+                await response.write(out)
         if line_buffer:
             await response.write(line_buffer)
         await response.write_eof()

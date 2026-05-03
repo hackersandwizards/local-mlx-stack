@@ -4,10 +4,9 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 load_model "${1:?usage: bench.sh <model-name>}"
 
-URL="http://127.0.0.1:$PORT/v1/chat/completions"
+URL=$(chat_url)
 PROMPT="Write a 200-word technical summary of how Bloom filters work."
-PAYLOAD=$(jq -nc --arg model "$MODEL_ID" --arg p "$PROMPT" \
-  '{model:$model, max_tokens:300, messages:[{role:"user", content:$p}]}')
+PAYLOAD=$(chat_payload "$PROMPT" 300)
 
 # warmup: iter 1 pays prefill JIT + Metal compile + KV alloc; iter 2 reaches steady state
 for _ in 1 2; do
