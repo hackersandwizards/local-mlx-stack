@@ -22,6 +22,7 @@ fi
       && echo "✓ model warm" >&2
     exit 0
   done
+  echo "⚠ warmup didn't complete in ${WARMUP_TIMEOUT_S}s — first request may be slow" >&2
 ) &
 disown
 

@@ -20,7 +20,7 @@ We tested both `Qwen3.6-35B-A3B-4bit` and `-8bit` end-to-end on an M3 Max 64 GB.
 # clone this repo into ~/opt/local-mlx-stack
 cd ~/opt/local-mlx-stack
 just bootstrap         # uv sync + doctor
-just pull qwen3.6-35b  # ~17.5 GB download
+just pull qwen3.6-35b  # ~20 GB into HF cache
 just serve             # → 127.0.0.1:8080
 ```
 

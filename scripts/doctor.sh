@@ -35,7 +35,7 @@ while read -r name; do
     fail "model '$name' has invalid MODEL_ID: '${id:-unset}'"
     bad=1
   fi
-done < <(list_models)
+done < <("$SCRIPTS_DIR/list.sh")
 (( bad == 0 )) || exit 1
 
 CACHE_PARENT="$HOME/.cache"
