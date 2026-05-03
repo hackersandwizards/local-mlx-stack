@@ -1,5 +1,6 @@
 DEFAULT_MODEL := "qwen3.6-35b"
 PORT := env_var_or_default("PORT", "8080")
+PROXY_PORT := env_var_or_default("PROXY_PORT", "8081")
 
 default:
     @just models
@@ -35,6 +36,15 @@ status:
 
 stop:
     @pkill -f mlx_vlm.server || echo "(nothing to stop)"
+
+# Reasoning-extraction proxy. Forwards :PROXY_PORT → :PORT, parses <think>
+# tags out of `content` into `reasoning_content` so harnesses with native
+# reasoning UIs (Zed, pi, OpenCode) work cleanly. Negligible perf overhead.
+proxy:
+    UPSTREAM=http://127.0.0.1:{{PORT}} PORT={{PROXY_PORT}} uv run python scripts/proxy.py
+
+stop-proxy:
+    @pkill -f 'scripts/proxy.py' || echo "(nothing to stop)"
 
 disk:
     @if [ -d ~/.cache/huggingface/hub ]; then uv run hf cache ls; else echo "(no HF cache yet)"; fi

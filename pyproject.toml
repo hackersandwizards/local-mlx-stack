@@ -7,4 +7,5 @@ dependencies = [
     "mlx-vlm==0.4.4",
     "torchvision==0.26.0",
     "huggingface_hub==1.13.0",
+    "aiohttp==3.13.2",
 ]

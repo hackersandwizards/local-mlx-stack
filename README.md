@@ -36,9 +36,24 @@ just bench             # tok/s against the running server (server must be up)
 just status            # what the server reports via /v1/models
 just stop              # kill any mlx_vlm.server
 just disk              # HF cache footprint
+just proxy             # reasoning-extraction proxy on :8081 (foreground)
+just stop-proxy        # kill any running proxy
 ```
 
 Note: `just status` reflects what the running server advertises at `/v1/models`. With `mlx_vlm.server --model X`, that's typically just `X`. The HF cache may hold more models than the live server exposes; use `just disk` to inspect cached weights.
+
+## Reasoning proxy
+
+Qwen3.6's chat template puts the opening `<think>` in the prompt prefix when thinking is enabled, so the model output starts inside a thinking block and emits `</think>` to close it. mlx_vlm 0.4.4 doesn't separate this into the structured `reasoning_content` field that harnesses (Zed, pi, OpenCode) expect, so reasoning ends up mixed with the answer in `content`.
+
+`scripts/proxy.py` (run via `just proxy`) listens on `:8081`, forwards to `:8080`, and parses `<think>...</think>` out of `content` into `reasoning_content` for both streaming and non-streaming responses. Other endpoints pass through unchanged.
+
+- Overhead: <1% (89.4 → 90.1 tok/s, within measurement noise on the bench)
+- Point harnesses at `http://127.0.0.1:8081/v1` instead of `:8080`
+- Override port: `PROXY_PORT=9090 just proxy`
+- Re-points upstream: `PORT=9000 just proxy` (proxies to `:9000`)
+
+Drop the proxy when [Blaizzy/mlx-vlm#786](https://github.com/Blaizzy/mlx-vlm/issues/786) lands and mlx_vlm gains native `reasoning_content` extraction.
 
 ## Cleanup
 
