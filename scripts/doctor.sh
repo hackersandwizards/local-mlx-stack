@@ -4,8 +4,8 @@ set -euo pipefail
 source "$(dirname "$0")/lib.sh"
 
 ok()   { echo "✓ $1"; }
-warn() { echo "⚠ $1"; }
-fail() { echo "✗ $1"; }
+warn() { echo "⚠ $1" >&2; }
+fail() { echo "✗ $1" >&2; }
 
 if command -v uv >/dev/null; then
   ok "uv installed"

@@ -7,14 +7,14 @@ load_model "${1:?usage: bench.sh <model-name>}"
 URL=$(chat_url)
 PROMPT="Write a 200-word technical summary of how Bloom filters work."
 PAYLOAD=$(chat_payload "$PROMPT" 300)
+WARMUP_PAYLOAD=$(chat_payload "$PROMPT" 1)
 
-# warmup: iter 1 pays prefill JIT + Metal compile + KV alloc; iter 2 reaches steady state
-for _ in 1 2; do
-  if ! curl -sf "$URL" -H 'Content-Type: application/json' -d "$PAYLOAD" >/dev/null; then
-    echo "✗ no server responding on 127.0.0.1:$PORT. Run 'just serve' first." >&2
-    exit 1
-  fi
-done
+# Warmup primes prefill JIT + Metal kernels + KV alloc with max_tokens=1
+# (~1s vs ~3s for the full 300-token payload).
+if ! curl -sf "$URL" -H 'Content-Type: application/json' -d "$WARMUP_PAYLOAD" >/dev/null; then
+  echo "✗ no server responding on 127.0.0.1:$PORT. Run 'just serve' first." >&2
+  exit 1
+fi
 
 RESP=$(curl -sf "$URL" -H 'Content-Type: application/json' -d "$PAYLOAD")
 

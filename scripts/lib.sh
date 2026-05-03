@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODELS_DIR="$SCRIPTS_DIR/../config/models"
 PORT="${PORT:-8080}"
