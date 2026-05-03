@@ -12,9 +12,15 @@ Listens on :8081 (override with PORT), forwards to UPSTREAM
      streaming emits the structured `tool_calls` delta correctly AND
      duplicates the raw XML into `content`; the XML is noise the client
      already has parsed. Verified on Qwen3.6-35B-A3B-4bit.
-  4. Rewrites SSE events for Zed/opencode/pi-mono compatibility — see
+  4. Coerces empty `tool_calls[].function.arguments` to `"{}"`. Zed runs
+     `serde_json::from_str` on this field and silently fails to execute
+     the call when it's empty (zed-industries/zed#48955).
+  5. Rewrites SSE events for Zed/opencode/pi-mono compatibility — see
      `_normalize_usage`, `_is_noop_delta`, `_format_chunk`, and
      `_split_mixed_delta` for the per-issue rationale.
+
+Upstream non-2xx responses are mirrored verbatim so the client sees the
+real status, content-type, and message instead of a mangled SSE stream.
 
 A second mount under `/quiet/*` runs the same extraction but drops
 `reasoning_content` instead of emitting it. The model still thinks
@@ -28,6 +34,7 @@ Other paths pass through.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from collections import defaultdict
@@ -40,6 +47,9 @@ from aiohttp import web
 class TagState(TypedDict):
     inside: bool
     buffer: str
+
+
+log = logging.getLogger("proxy")
 
 UPSTREAM = os.environ.get("UPSTREAM", "http://127.0.0.1:8080")
 PORT = int(os.environ.get("PORT", "8081"))
@@ -150,6 +160,21 @@ def _normalize_usage(obj: dict) -> None:
         usage["completion_tokens"] = usage.pop("output_tokens")
 
 
+def _coerce_empty_tool_arguments(tool_calls) -> None:
+    """mlx-vlm emits `arguments: ""` for no-arg tool calls; Zed then runs
+    `serde_json::from_str("")` on it, fails silently, and the call is never
+    executed (zed-industries/zed#48955). Coerce to `"{}"`. Safe to apply
+    per-delta because mlx-vlm emits the entire tool_call in one streaming
+    delta — verified on Qwen3.6-35B-A3B-4bit — so we never overwrite a
+    legitimately-empty first chunk of a streamed argument string."""
+    if not tool_calls:
+        return
+    for tc in tool_calls:
+        fn = tc.get("function") if isinstance(tc, dict) else None
+        if isinstance(fn, dict) and fn.get("arguments") == "":
+            fn["arguments"] = "{}"
+
+
 def _is_noop_delta(obj: dict) -> bool:
     """A chunk is a no-op when no choice carries content, reasoning,
     tool_calls, or finish_reason. mlx-vlm emits these for held-back
@@ -178,6 +203,9 @@ def _split_mixed_delta(obj: dict, deltas: list[dict]) -> bytes:
     reasoning within a single delta) keeps order intact. Pop+restore
     avoids deepcopying the surrounding obj."""
     contents = [d.pop("content", None) for d in deltas]
+    # Extra `\n` promotes the `data:` line terminator into a full SSE event
+    # boundary (`\n\n`) so downstream sees two events, not one with a multi-
+    # line data field.
     reasoning_event = _serialize(obj) + b"\n"
     for d, c in zip(deltas, contents):
         d.pop("reasoning_content", None)
@@ -210,7 +238,64 @@ def _format_chunk(obj: dict, first_chunk_sent: bool) -> bytes:
 
 
 def _forward_headers(headers) -> dict:
-    return {k: v for k, v in headers.items() if k.lower() not in ("host", "content-length")}
+    # Drop accept-encoding so aiohttp can't transparently gunzip a response we
+    # then re-emit as raw bytes — keeping the original content-encoding header
+    # would lie about the body. Drop content-length because aiohttp recomputes it.
+    return {k: v for k, v in headers.items() if k.lower() not in ("host", "content-length", "accept-encoding")}
+
+
+class _StreamState:
+    """Mutable per-response state for the streaming rewriter."""
+
+    __slots__ = ("think_states", "strip_states", "hide_reasoning", "first_chunk_sent")
+
+    def __init__(self, hide_reasoning: bool, starts_in_think: bool) -> None:
+        self.think_states: dict[int, TagState] = defaultdict(lambda: make_state(starts_in_think))
+        self.strip_states: dict[int, TagState] = defaultdict(make_state)
+        self.hide_reasoning = hide_reasoning
+        self.first_chunk_sent = False
+
+
+def _rewrite_message(
+    msg: dict,
+    think_state: TagState,
+    strip_state: TagState,
+    hide_reasoning: bool,
+) -> None:
+    """Apply the per-message rewrite invariant in place: lift `<think>`
+    into reasoning, strip `<tool_call>` XML from content, coerce empty
+    tool_call arguments. Used by both streaming (per delta) and non-
+    streaming (per message); only the state lifetime differs."""
+    text = msg.get("content")
+    if text:
+        new_content, reasoning = rewrite_content(text, think_state, strip_state)
+        msg["content"] = new_content
+        if reasoning and not hide_reasoning:
+            msg["reasoning_content"] = reasoning
+    _coerce_empty_tool_arguments(msg.get("tool_calls"))
+
+
+def _process_sse_line(raw_line: bytes, state: _StreamState) -> bytes:
+    """Process one SSE line through the rewriter. Returns the bytes to
+    write (empty bytes = drop). The same helper handles in-stream lines
+    and the final partial line on EOF, so a stream that ends without a
+    trailing `\\n` doesn't bypass the rewriter."""
+    if not raw_line.startswith(SSE_PREFIX):
+        return raw_line + b"\n"
+    try:
+        obj = json.loads(raw_line[len(SSE_PREFIX):])
+    except json.JSONDecodeError:
+        # Covers `[DONE]` and any other non-JSON payload mlx-vlm emits.
+        return raw_line + b"\n"
+    for choice in obj.get("choices", []):
+        delta = choice.get("delta") or {}
+        idx = choice.get("index", 0)
+        _rewrite_message(delta, state.think_states[idx], state.strip_states[idx], state.hide_reasoning)
+    _normalize_usage(obj)
+    out = _format_chunk(obj, state.first_chunk_sent)
+    if out:
+        state.first_chunk_sent = True
+    return out
 
 
 async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
@@ -230,10 +315,13 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
             streaming = bool(req.get("stream", False))
             if "enable_thinking" not in req:
                 req["enable_thinking"] = True
-                body = json.dumps(req).encode("utf-8")
+                # ensure_ascii=False keeps Umlauts/CJK as one byte each instead
+                # of expanding to `ü` etc; harmless on the wire and ~30%
+                # smaller for non-ASCII prompts.
+                body = json.dumps(req, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             starts_in_think = bool(req["enable_thinking"])
     except json.JSONDecodeError:
-        pass
+        log.warning("could not parse request body; forwarding as-is, enable_thinking not injected")
 
     session = request.app[SESSION]
     upstream_path, hide_reasoning = _strip_quiet(request.path_qs)
@@ -241,19 +329,23 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
     headers = _forward_headers(request.headers)
 
     async with session.post(upstream_url, data=body, headers=headers) as upstream:
+        if upstream.status >= 400:
+            # Don't try to rewrite an error body as SSE — mirror it verbatim
+            # so the client sees the real status, content-type, and message.
+            # Other upstream headers are intentionally dropped; mlx-vlm errors
+            # are short JSON payloads and Content-Type is the only one clients
+            # actually need.
+            return web.Response(
+                status=upstream.status,
+                body=await upstream.read(),
+                content_type=upstream.headers.get("Content-Type", "text/plain"),
+            )
+
         if not streaming:
             data = await upstream.json()
             for choice in data.get("choices", []):
                 msg = choice.get("message") or {}
-                text = msg.get("content") or ""
-                if not text:
-                    continue
-                new_content, reasoning = rewrite_content(
-                    text, make_state(starts_in_think), make_state()
-                )
-                msg["content"] = new_content
-                if reasoning and not hide_reasoning:
-                    msg["reasoning_content"] = reasoning
+                _rewrite_message(msg, make_state(starts_in_think), make_state(), hide_reasoning)
             _normalize_usage(data)
             return web.json_response(data, status=upstream.status)
 
@@ -267,9 +359,7 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
         )
         await response.prepare(request)
 
-        think_states: dict[int, TagState] = defaultdict(lambda: make_state(starts_in_think))
-        strip_states: dict[int, TagState] = defaultdict(make_state)
-        first_chunk_sent = False
+        state = _StreamState(hide_reasoning=hide_reasoning, starts_in_think=starts_in_think)
         line_buffer = b""
         async for chunk in upstream.content.iter_any():
             line_buffer += chunk
@@ -282,36 +372,15 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
             line_buffer = lines.pop()
             out = bytearray()
             for raw_line in lines:
-                if not raw_line.startswith(SSE_PREFIX):
-                    out += raw_line + b"\n"
-                    continue
-                try:
-                    obj = json.loads(raw_line[len(SSE_PREFIX):])
-                except json.JSONDecodeError:
-                    # Covers `[DONE]` and any other non-JSON payload mlx-vlm emits.
-                    out += raw_line + b"\n"
-                    continue
-                for choice in obj.get("choices", []):
-                    delta = choice.get("delta") or {}
-                    text = delta.get("content")
-                    if text is None:
-                        continue
-                    idx = choice.get("index", 0)
-                    new_content, reasoning = rewrite_content(
-                        text, think_states[idx], strip_states[idx]
-                    )
-                    delta["content"] = new_content
-                    if reasoning and not hide_reasoning:
-                        delta["reasoning_content"] = reasoning
-                _normalize_usage(obj)
-                chunk_bytes = _format_chunk(obj, first_chunk_sent)
-                if chunk_bytes:
-                    out += chunk_bytes
-                    first_chunk_sent = True
+                out += _process_sse_line(raw_line, state)
             if out:
                 await response.write(out)
         if line_buffer:
-            await response.write(line_buffer)
+            # Upstream ended mid-line (no trailing `\n`). Treat as a complete
+            # event so the rewriter sees it instead of forwarding raw.
+            tail = _process_sse_line(line_buffer, state)
+            if tail:
+                await response.write(tail)
         await response.write_eof()
         return response
 
@@ -349,6 +418,11 @@ async def _on_cleanup(app: web.Application) -> None:
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=os.environ.get("PROXY_LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        stream=sys.stderr,
+    )
     app = web.Application(client_max_size=128 * 1024 * 1024)
     app.on_startup.append(_on_startup)
     app.on_cleanup.append(_on_cleanup)

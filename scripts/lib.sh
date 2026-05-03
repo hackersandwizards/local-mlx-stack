@@ -12,6 +12,7 @@ chat_url() {
 }
 
 chat_payload() {
+  : "${MODEL_ID:?MODEL_ID not set; call load_model first}"
   local prompt="$1" tokens="${2:-1}"
   jq -nc --arg model "$MODEL_ID" --arg p "$prompt" --argjson n "$tokens" \
     '{model:$model, max_tokens:$n, messages:[{role:"user", content:$p}]}'
