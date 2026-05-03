@@ -84,13 +84,20 @@ def _forward_headers(headers) -> dict:
 async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
     body = await request.read()
     streaming = False
+    # mlx-vlm's chat template prepends `<think>\n` to the assistant turn when
+    # enable_thinking is true, so the streamed output starts INSIDE the think
+    # block and the model only emits `</think>` to close it. mlx-vlm defaults
+    # enable_thinking to False — match that here.
+    starts_in_think = False
     try:
-        streaming = bool(json.loads(body or b"{}").get("stream", False))
+        req = json.loads(body or b"{}")
+        streaming = bool(req.get("stream", False))
+        starts_in_think = bool(req.get("enable_thinking", False))
     except json.JSONDecodeError:
         pass
 
     def make_state() -> ThinkState:
-        return {"in_think": False, "buffer": ""}
+        return {"in_think": starts_in_think, "buffer": ""}
 
     upstream_url = f"{UPSTREAM}{request.path_qs}"
     headers = _forward_headers(request.headers)
