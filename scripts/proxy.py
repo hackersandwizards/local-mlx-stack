@@ -70,8 +70,7 @@ QUIET_PREFIX = "/quiet"
 
 
 def _strip_quiet(path_qs: str) -> tuple[str, bool]:
-    """If `path_qs` starts with `/quiet`, strip it and signal hide_reasoning.
-    Returns (upstream_path, hide_reasoning). Empty paths normalize to "/"."""
+    """Returns (upstream_path, hide_reasoning); bare `/quiet` normalizes to `/`."""
     if path_qs.startswith(QUIET_PREFIX):
         return path_qs[len(QUIET_PREFIX):] or "/", True
     return path_qs, False
@@ -193,7 +192,10 @@ def _is_noop_delta(obj: dict) -> bool:
 
 
 def _serialize(obj: dict) -> bytes:
-    return SSE_PREFIX + json.dumps(obj, separators=(",", ":")).encode("utf-8") + b"\n"
+    # ensure_ascii=False keeps Umlauts/CJK as their UTF-8 byte form instead of
+    # expanding to `ü` etc. SSE is text/event-stream over UTF-8 already,
+    # so this is purely smaller wire bytes per delta on non-ASCII output.
+    return SSE_PREFIX + json.dumps(obj, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
 
 
 def _split_mixed_delta(obj: dict, deltas: list[dict]) -> bytes:
@@ -315,9 +317,6 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
             streaming = bool(req.get("stream", False))
             if "enable_thinking" not in req:
                 req["enable_thinking"] = True
-                # ensure_ascii=False keeps Umlauts/CJK as one byte each instead
-                # of expanding to `ü` etc; harmless on the wire and ~30%
-                # smaller for non-ASCII prompts.
                 body = json.dumps(req, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
             starts_in_think = bool(req["enable_thinking"])
     except json.JSONDecodeError:
@@ -335,9 +334,11 @@ async def _proxy_chat_completions(request: web.Request) -> web.StreamResponse:
             # Other upstream headers are intentionally dropped; mlx-vlm errors
             # are short JSON payloads and Content-Type is the only one clients
             # actually need.
+            err_body = await upstream.read()
+            log.warning("upstream %s on %s: %s", upstream.status, upstream_path, err_body[:300].decode("utf-8", "replace"))
             return web.Response(
                 status=upstream.status,
-                body=await upstream.read(),
+                body=err_body,
                 content_type=upstream.headers.get("Content-Type", "text/plain"),
             )
 

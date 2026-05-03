@@ -9,28 +9,18 @@ from __future__ import annotations
 
 from scripts.proxy import (
     SSE_PREFIX,
-    TAG_THINK_CLOSE,
-    TAG_THINK_OPEN,
-    TAG_TOOL_CALL_CLOSE,
-    TAG_TOOL_CALL_OPEN,
     _coerce_empty_tool_arguments,
+    _forward_headers,
     _is_noop_delta,
     _partial_tag_suffix_len,
     _process_sse_line,
-    _split_by_tags,
+    _strip_quiet,
     _StreamState,
     make_state,
     rewrite_content,
+    split_chunk,
     strip_tool_call_xml,
 )
-
-
-def _think(text: str, state) -> tuple[str, str]:
-    return _split_by_tags(text, state, TAG_THINK_OPEN, TAG_THINK_CLOSE)
-
-
-def _tool(text: str, state) -> str:
-    return strip_tool_call_xml(text, state)
 
 
 # ---------- _split_by_tags / _partial_tag_suffix_len ----------
@@ -39,8 +29,8 @@ def _tool(text: str, state) -> str:
 def test_split_by_tags_chunked_open_tag():
     """Tag split across two chunks: `<th` + `ink>x</think>b` → ('b', 'x')."""
     state = make_state()
-    out1, in1 = _think("a<th", state)
-    out2, in2 = _think("ink>x</think>b", state)
+    out1, in1 = split_chunk("a<th", state)
+    out2, in2 = split_chunk("ink>x</think>b", state)
     assert out1 + out2 == "ab"
     assert in1 + in2 == "x"
 
@@ -48,7 +38,7 @@ def test_split_by_tags_chunked_open_tag():
 def test_split_by_tags_consecutive():
     """Back-to-back tags with no separation: outsides empty, insides concat."""
     state = make_state()
-    outside, inside = _think("<think>a</think><think>b</think>", state)
+    outside, inside = split_chunk("<think>a</think><think>b</think>", state)
     assert outside == ""
     assert inside == "ab"
 
@@ -57,14 +47,14 @@ def test_split_by_tags_starts_inside():
     """When the stream begins inside a tag (mlx-vlm with enable_thinking=true),
     text before the close tag is reasoning, content starts after."""
     state = make_state(inside=True)
-    outside, inside = _think("reasoning</think>visible", state)
+    outside, inside = split_chunk("reasoning</think>visible", state)
     assert outside == "visible"
     assert inside == "reasoning"
 
 
 def test_split_by_tags_no_tags_passthrough():
     state = make_state()
-    outside, inside = _think("plain content with no tags", state)
+    outside, inside = split_chunk("plain content with no tags", state)
     assert outside == "plain content with no tags"
     assert inside == ""
 
@@ -90,14 +80,14 @@ def test_partial_tag_suffix_full_tag_does_not_match():
 
 def test_strip_tool_call_xml_chunked():
     state = make_state()
-    out1 = _tool("\n\n<tool_call>\n<func", state)
-    out2 = _tool("tion=x>\n</function>\n</tool_call>after", state)
+    out1 = strip_tool_call_xml("\n\n<tool_call>\n<func", state)
+    out2 = strip_tool_call_xml("tion=x>\n</function>\n</tool_call>after", state)
     assert out1 + out2 == "\n\nafter"
 
 
 def test_strip_tool_call_xml_no_tags():
     state = make_state()
-    assert _tool("plain content", state) == "plain content"
+    assert strip_tool_call_xml("plain content", state) == "plain content"
 
 
 # ---------- rewrite_content (combined think + tool_call passes) ----------
@@ -233,3 +223,81 @@ def test_process_sse_line_drops_noop_after_first():
     state.first_chunk_sent = True
     raw = SSE_PREFIX + b'{"choices":[{"delta":{"role":"assistant"}}]}'
     assert _process_sse_line(raw, state) == b""
+
+
+def test_process_sse_line_keeps_first_role_only_chunk():
+    """The very first chunk (role:assistant only) must survive even though
+    it's a no-op — Vercel AI SDK and others key on it."""
+    state = _state()
+    raw = SSE_PREFIX + b'{"choices":[{"delta":{"role":"assistant"}}]}'
+    out = _process_sse_line(raw, state)
+    assert b'"role":"assistant"' in out
+    assert state.first_chunk_sent is True
+
+
+def test_process_sse_line_splits_mixed_delta_into_two_events():
+    """`</think>` boundary delta carries both reasoning and content. pi-mono
+    processes content before reasoning within one delta, so we emit two
+    SSE events (reasoning first, then content) to keep order intact."""
+    raw = SSE_PREFIX + b'{"choices":[{"index":0,"delta":{"content":"r</think>v"}}]}'
+    out = _process_sse_line(raw, _state(starts_in_think=True))
+    events = [e for e in out.split(b"\n\n") if e.strip()]
+    assert len(events) == 2
+    assert b'"reasoning_content":"r"' in events[0]
+    assert b'"content":"v"' in events[1]
+    assert b"reasoning_content" not in events[1]
+
+
+def test_process_sse_line_drops_empty_content_when_reasoning_present():
+    """When a delta has reasoning_content + content:"", strip the empty
+    content so opencode's AI SDK doesn't oscillate text/reasoning Parts."""
+    raw = SSE_PREFIX + b'{"choices":[{"index":0,"delta":{"content":"<think>r</think>"}}]}'
+    out = _process_sse_line(raw, _state())
+    assert b'"reasoning_content":"r"' in out
+    # content key should be absent (not just empty)
+    assert b'"content":""' not in out
+    assert b'"content"' not in out
+
+
+# ---------- _strip_quiet ----------
+
+
+def test_strip_quiet_removes_prefix():
+    assert _strip_quiet("/quiet/v1/chat/completions") == ("/v1/chat/completions", True)
+
+
+def test_strip_quiet_passthrough_when_absent():
+    assert _strip_quiet("/v1/chat/completions") == ("/v1/chat/completions", False)
+
+
+def test_strip_quiet_normalizes_bare_quiet_to_root():
+    """`/quiet` alone (no trailing path) becomes `/` — defensive against a
+    misconfigured client base URL."""
+    assert _strip_quiet("/quiet") == ("/", True)
+
+
+# ---------- _forward_headers ----------
+
+
+def test_forward_headers_drops_hop_by_hop_and_encoding():
+    """host, content-length, accept-encoding all stripped; aiohttp recomputes
+    the first two and the third would let aiohttp gunzip a body we then
+    re-emit raw."""
+    out = _forward_headers({
+        "Host": "x",
+        "Content-Length": "10",
+        "Accept-Encoding": "gzip",
+        "Authorization": "Bearer k",
+        "Content-Type": "application/json",
+    })
+    assert "Authorization" in out
+    assert "Content-Type" in out
+    assert "Host" not in out
+    assert "Content-Length" not in out
+    assert "Accept-Encoding" not in out
+
+
+def test_forward_headers_is_case_insensitive():
+    """Real HTTP headers come in any case; the filter must match regardless."""
+    out = _forward_headers({"HOST": "x", "accept-ENCODING": "gzip"})
+    assert out == {}
