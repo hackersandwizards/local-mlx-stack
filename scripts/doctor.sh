@@ -13,6 +13,12 @@ else
   fail "uv missing. Install: brew install uv"
 fi
 
+if command -v omlx >/dev/null; then
+  ok "omlx installed"
+else
+  fail "omlx missing. Install: brew tap jundot/omlx https://github.com/jundot/omlx && brew install omlx"
+fi
+
 VENV="$SCRIPTS_DIR/../.venv"
 if [[ -d "$VENV" ]]; then
   ok ".venv present"
@@ -20,23 +26,19 @@ else
   warn ".venv missing. Run: just bootstrap"
 fi
 
-if compgen -G "$VENV/lib/python*/site-packages/mlx_vlm/__init__.py" >/dev/null; then
-  ok "mlx-vlm installed"
-else
-  fail "mlx-vlm missing. Run: just bootstrap"
-fi
-
 bad=0
 while read -r name; do
-  id=$(load_model "$name" >/dev/null && echo "$MODEL_ID")
-  if [[ "$id" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
-    ok "model '$name' → $id"
+  load_model "$name" >/dev/null
+  : "${MODEL_ID:?MODEL_ID unset in $name.env}"
+  : "${HF_REPO:?HF_REPO unset in $name.env}"
+  link="$HOME/.omlx/models/$MODEL_ID"
+  if [[ -e "$link" ]]; then
+    ok "model '$name' → ~/.omlx/models/$MODEL_ID"
   else
-    fail "model '$name' has invalid MODEL_ID: '${id:-unset}'"
+    warn "model '$name' missing symlink. Run: just pull $name"
     bad=1
   fi
 done < <("$SCRIPTS_DIR/list.sh")
-(( bad == 0 )) || exit 1
 
 CACHE_PARENT="$HOME/.cache"
 [[ -d "$HOME/.cache/huggingface" ]] && CACHE_PARENT="$HOME/.cache/huggingface"
@@ -44,17 +46,16 @@ if DISK_FREE_GB=$(df -Pk "$CACHE_PARENT" | awk 'NR==2 {printf "%d", $4/1024/1024
   if (( DISK_FREE_GB >= 60 )); then
     ok "$DISK_FREE_GB GB free for HF cache"
   else
-    warn "only $DISK_FREE_GB GB free at $CACHE_PARENT. Registry needs ~21 GB."
+    warn "only $DISK_FREE_GB GB free at $CACHE_PARENT. Qwen3.6-27B needs ~30 GB."
   fi
 else
   warn "could not read disk space at $CACHE_PARENT"
 fi
 
-PROXY_PORT="${PROXY_PORT:-8081}"
-for p in "$PORT" "$PROXY_PORT"; do
-  if port_in_use "$p"; then
-    warn "port $p in use"
-  else
-    ok "port $p free"
-  fi
-done
+if port_in_use "$PORT"; then
+  warn "port $PORT in use"
+else
+  ok "port $PORT free"
+fi
+
+(( bad == 0 ))

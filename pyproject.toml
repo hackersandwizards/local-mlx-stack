@@ -1,18 +1,8 @@
 [project]
 name = "local-mlx-stack"
-version = "0.1.0"
-description = "Version-controlled local MLX inference stack for Apple Silicon"
+version = "0.2.0"
+description = "Local inference stack for Apple Silicon. oMLX server + Qwen3.6-27B."
 requires-python = ">=3.11,<3.13"
 dependencies = [
-    "mlx-vlm==0.4.4",
-    "torchvision==0.26.0",
     "huggingface_hub==1.13.0",
-    "aiohttp==3.13.2",
 ]
-
-[dependency-groups]
-dev = ["pytest==9.0.3"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["."]

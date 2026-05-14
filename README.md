@@ -1,83 +1,58 @@
 # local-mlx-stack
 
-Version-controlled local MLX inference for Apple Silicon. Serves OpenAI-compatible endpoints on `127.0.0.1:8080` from a project-local `.venv`. No system Python touched, manual start only.
+Local inference for Apple Silicon. Serves OpenAI-compatible endpoints on `127.0.0.1:8080` via [oMLX](https://github.com/jundot/omlx). One model, one port, manual start.
 
 ## Model
 
 | Name | Repo | RAM | Notes |
 |---|---|---|---|
-| `qwen3.6-35b` | `mlx-community/Qwen3.6-35B-A3B-4bit` | ~21 GB peak | Default. Vision + text + tools. |
+| `qwen3.6-27b` | `unsloth/Qwen3.6-27B-UD-MLX-6bit` | ~29 GB weights + KV | Dense 27B. Vision + text + tools. SWE-bench Verified 77.2%. |
 
-Served via `mlx_vlm.server` (handles text-only and image input). Single port (`8080`, override with `PORT=...`), one model at a time.
+Served via `omlx serve` with paged SSD prefix cache (`~/.omlx/cache`, 50 GB) and 8 GB hot cache. KV state persists across requests, so repeated prefixes (system prompt + file context) don't re-prefill.
 
 ## Bootstrap (fresh machine)
 
 ```bash
-# clone this repo into ~/opt/local-mlx-stack
+# prereqs
+brew install uv just jq
+brew tap jundot/omlx https://github.com/jundot/omlx && brew install omlx
+
+# repo
 cd ~/opt/local-mlx-stack
 just bootstrap         # uv sync + doctor
-just pull qwen3.6-35b  # ~20 GB into HF cache
+just pull qwen3.6-27b  # ~29 GB into HF cache, symlinks into ~/.omlx/models/
 just serve             # → 127.0.0.1:8080
 ```
-
-Requires: `uv`, `just`, `jq`, `lsof`, `curl` (all standard on macOS + `brew install uv just jq`).
-
-## On M3 Max 64 GB
-
-- ~88 tok/s steady-state on the bench prompt; ~21 GB peak RAM
-- OpenAI-compatible: structured `tool_calls`, German, image input (data URL), code
 
 ## Daily use
 
 ```bash
 just models            # list registered models
 just serve             # default model, foreground (Ctrl-C to stop)
-just bench             # tok/s against the running server (server must be up)
-just status            # what the server reports via /v1/models
-just stop              # kill any mlx_vlm.server
+just bench             # tok/s against the running server
+just status            # what /v1/models reports
+just stop              # kill omlx serve
 just disk              # HF cache footprint
-just proxy             # reasoning-extraction proxy on :8081 (foreground)
-just stop-proxy        # kill any running proxy
-just test              # run the proxy unit tests (pytest)
+just clean qwen3.6-27b # remove model from HF cache + ~/.omlx/models symlink
 ```
 
-Note: `just status` reflects what the running server advertises at `/v1/models`. With `mlx_vlm.server --model X`, that's typically just `X`. The HF cache may hold more models than the live server exposes; use `just disk` to inspect cached weights.
+## How models are wired
 
-## Reasoning proxy
+- `config/models/<name>.env` declares `MODEL_ID` (oMLX-visible name) and `HF_REPO` (HuggingFace repo).
+- `scripts/pull.sh` runs `hf download` into `~/.cache/huggingface/hub/` and symlinks the snapshot into `~/.omlx/models/$MODEL_ID/`.
+- `scripts/serve.sh` runs `omlx serve --model-dir ~/.omlx/models/`. oMLX discovers models by subdir name.
 
-Qwen3.6's chat template puts the opening `<think>` in the prompt prefix when thinking is enabled, so the model output starts inside a thinking block and emits `</think>` to close it. mlx_vlm 0.4.4 doesn't separate this into the structured `reasoning_content` field that harnesses (Zed, pi, OpenCode) expect, so reasoning ends up mixed with the answer in `content`.
+oMLX cannot read the HF Hub cache layout directly ([issue #10](https://github.com/jundot/omlx/issues/10)); the symlink bridges it without duplicating 29 GB of weights.
 
-`scripts/proxy.py` (run via `just proxy`) listens on `:8081`, forwards to `:8080`, and parses `<think>...</think>` out of `content` into `reasoning_content` for both streaming and non-streaming responses. Other endpoints pass through unchanged.
+## Endpoints
 
-- Overhead: <1% (89.4 → 90.1 tok/s, within measurement noise on the bench)
-- Point harnesses at `http://127.0.0.1:8081/v1` instead of `:8080`
-- Override port: `PROXY_PORT=9090 just proxy`
-- Re-points upstream: `PORT=9000 just proxy` (proxies to `:9000`)
-- Verbose logging: `PROXY_LOG_LEVEL=DEBUG just proxy` (default `INFO`; upstream errors are logged at `WARNING`)
+OpenAI-compatible and Anthropic Messages on `:8080`. Point any client at `http://127.0.0.1:8080/v1`.
 
-Drop the proxy when [Blaizzy/mlx-vlm#786](https://github.com/Blaizzy/mlx-vlm/issues/786) lands and mlx_vlm gains native `reasoning_content` extraction.
-
-### Quiet route (hide reasoning per-client)
-
-The proxy also serves `/quiet/v1/chat/completions`. Same model behavior — `enable_thinking=true` is still injected, the model still thinks — but `reasoning_content` is dropped before being emitted. Use it for harnesses that render reasoning awkwardly (one "Thinking:" line per token) and have no client-side opt-out, e.g. opencode ([anomalyco/opencode#10470](https://github.com/anomalyco/opencode/issues/10470)).
-
-| Client | Endpoint |
-|---|---|
-| pi-mono | `http://127.0.0.1:8081/v1` |
-| Zed | `http://127.0.0.1:8081/v1` (renders reasoning as a collapsible "Thinking" block) |
-| opencode | `http://127.0.0.1:8081/quiet/v1` |
-
-## Cleanup
-
-```bash
-just clean qwen3.6-35b      # remove the model from HF cache
-just clean-all              # remove every model in config/models/
-just clean-cache            # nuke ~/.cache/huggingface/hub (with prompt)
-```
+Admin UI at `http://127.0.0.1:8080/admin` (model load/unload, KV cache stats, benchmarks).
 
 ## Troubleshooting
 
-- **`port 8080 already in use`**: run `just stop`, or `lsof -nP -iTCP:8080 -sTCP:LISTEN` to find the holder.
-- **`mlx-vlm missing`**: run `just bootstrap`.
-- **Image URL fails with 403**: some hosts (e.g. Wikimedia) block `requests`' default User-Agent. Use a base64 data URL or a host that doesn't UA-gate.
-- **Model loads slowly on first request**: `serve.sh` pre-warms in the background after start; if you hit `/v1/chat/completions` immediately it pays the load tax.
+- **`port 8080 already in use`** — run `just stop`, or `lsof -nP -iTCP:8080 -sTCP:LISTEN` to find the holder.
+- **`omlx missing`** — run the brew commands in Bootstrap.
+- **Model loads slowly on first request** — `serve.sh` warms in the background; if you hit `/v1/chat/completions` immediately it pays the load tax (~60–90 s for 29 GB).
+- **Model not in `~/.omlx/models`** — run `just pull qwen3.6-27b`.

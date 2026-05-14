@@ -1,6 +1,5 @@
-DEFAULT_MODEL := "qwen3.6-35b"
+DEFAULT_MODEL := "qwen3.6-27b"
 PORT := env_var_or_default("PORT", "8080")
-PROXY_PORT := env_var_or_default("PROXY_PORT", "8081")
 
 default:
     @just models
@@ -11,9 +10,6 @@ bootstrap:
 
 doctor:
     @scripts/doctor.sh
-
-test:
-    uv run --group dev pytest
 
 models:
     @scripts/list.sh | sed 's/^/  - /'
@@ -38,16 +34,7 @@ status:
     fi
 
 stop:
-    @pkill -f mlx_vlm.server || echo "(nothing to stop)"
-
-# Reasoning-extraction proxy. Forwards :PROXY_PORT → :PORT, parses <think>
-# tags out of `content` into `reasoning_content` so harnesses with native
-# reasoning UIs (Zed, pi, OpenCode) work cleanly. Negligible perf overhead.
-proxy:
-    UPSTREAM=http://127.0.0.1:{{PORT}} PORT={{PROXY_PORT}} uv run python scripts/proxy.py
-
-stop-proxy:
-    @pkill -f 'scripts/proxy.py' || echo "(nothing to stop)"
+    @pkill -f 'omlx serve' || echo "(nothing to stop)"
 
 disk:
     @if [ -d ~/.cache/huggingface/hub ]; then uv run hf cache ls; else echo "(no HF cache yet)"; fi
@@ -59,7 +46,7 @@ clean-all:
     @scripts/list.sh | xargs -n1 scripts/clean.sh
 
 clean-cache:
-    @echo "This will delete ~/.cache/huggingface/hub entirely (all HF models, not just our registry)."
+    @echo "This will delete ~/.cache/huggingface/hub and ~/.omlx/models entirely."
     @read -rp "Type 'yes' to continue: " confirm && [ "$$confirm" = "yes" ]
-    rm -rf ~/.cache/huggingface/hub
-    @echo "✓ HF cache cleared"
+    rm -rf ~/.cache/huggingface/hub ~/.omlx/models
+    @echo "✓ caches cleared"
