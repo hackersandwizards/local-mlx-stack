@@ -1,4 +1,4 @@
-DEFAULT_MODEL := "qwen3.6-27b"
+DEFAULT_MODEL := "qwen3.6-35b"
 PORT := env_var_or_default("PORT", "8080")
 
 default:
