@@ -15,6 +15,7 @@ if [[ -z "$SNAPSHOT" ]]; then
   exit 1
 fi
 
-mkdir -p "$HOME/.omlx/models"
-ln -sfn "$SNAPSHOT" "$HOME/.omlx/models/$MODEL_ID"
-echo "✓ $MODEL_ID linked → $SNAPSHOT"
+LINK_DIR="$(backend_link_dir "$BACKEND")"
+mkdir -p "$LINK_DIR"
+ln -sfn "$SNAPSHOT" "$LINK_DIR/$MODEL_ID"
+echo "✓ $MODEL_ID [$BACKEND] linked → $SNAPSHOT"

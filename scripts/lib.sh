@@ -2,7 +2,16 @@
 set -euo pipefail
 SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODELS_DIR="$SCRIPTS_DIR/../config/models"
-PORT="${PORT:-8080}"
+OMLX_MODELS_DIR="$HOME/.omlx/models"
+MTPLX_MODELS_DIR="$HOME/.mtplx/models"
+
+backend_link_dir() {
+  case "$1" in
+    omlx)  echo "$OMLX_MODELS_DIR" ;;
+    mtplx) echo "$MTPLX_MODELS_DIR" ;;
+    *)     echo "✗ unknown BACKEND '$1'" >&2; return 1 ;;
+  esac
+}
 
 port_in_use() {
   lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
@@ -30,5 +39,7 @@ load_model() {
   set -a
   # shellcheck disable=SC1090
   source "$file"
+  BACKEND="${BACKEND:-omlx}"
+  MODEL_PATH="$(backend_link_dir "$BACKEND")/$MODEL_ID"
   set +a
 }

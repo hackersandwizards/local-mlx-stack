@@ -1,5 +1,4 @@
 DEFAULT_MODEL := "qwen3.6-35b"
-PORT := env_var_or_default("PORT", "8080")
 
 default:
     @just models
@@ -27,14 +26,11 @@ bench NAME=DEFAULT_MODEL:
     scripts/bench.sh {{NAME}}
 
 status:
-    @if RESP=$(curl -sf http://127.0.0.1:{{PORT}}/v1/models 2>/dev/null); then \
-      echo "$RESP" | jq -r '.data[].id'; \
-    else \
-      echo "(no server running on :{{PORT}})"; \
-    fi
+    @scripts/status.sh
 
 stop:
-    @pkill -f 'omlx serve' || echo "(nothing to stop)"
+    @pkill -f 'omlx serve' && echo "✓ omlx stopped" || echo "(no omlx running)"
+    @pkill -f 'mtplx.server.openai' && echo "✓ mtplx stopped" || echo "(no mtplx running)"
 
 disk:
     @if [ -d ~/.cache/huggingface/hub ]; then uv run hf cache ls; else echo "(no HF cache yet)"; fi
@@ -46,7 +42,4 @@ clean-all:
     @scripts/list.sh | xargs -n1 scripts/clean.sh
 
 clean-cache:
-    @echo "This will delete ~/.cache/huggingface/hub and ~/.omlx/models entirely."
-    @read -rp "Type 'yes' to continue: " confirm && [ "$$confirm" = "yes" ]
-    rm -rf ~/.cache/huggingface/hub ~/.omlx/models
-    @echo "✓ caches cleared"
+    @scripts/clean-cache.sh
