@@ -57,6 +57,15 @@ just clean-cache           # nuke ~/.cache/huggingface/hub and per-backend dirs 
 
 The per-backend symlink dir matters: omlx auto-discovers every subdir of its `--model-dir`, so MTPLX-only checkpoints must live elsewhere or omlx will also advertise them.
 
+## Sampling
+
+Both models are pinned to Qwen3.6's thinking/coding preset — `temp 0.6`, `top_p 0.95`, `top_k 20` — per the [Unsloth Qwen3.6 guide](https://unsloth.ai/docs/models/qwen3.6). Clients may still override per request.
+
+- **omlx / 35B** — global `sampling` block in `~/.omlx/settings.json`, read by `omlx serve`. The model's own `generation_config.json` is not used by omlx.
+- **MTPLX / 27B** — `--default-temperature` / `--default-top-p` in `scripts/serve-mtplx.sh`. MTPLX exposes no `top_k` flag; the model's `generation_config.json` carries `top_k 20`.
+
+Neither backend can pin `presence_penalty`, so the guide's thinking/general preset (`presence_penalty 1.5`) is not fully reproducible here.
+
 ## Endpoints
 
 Both expose OpenAI-compatible chat completions. Point clients at the right port per model:

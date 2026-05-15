@@ -17,6 +17,8 @@ exec mtplx quickstart \
   --port "$PORT" \
   --model-id "$MODEL_ID" \
   --profile performance-cold \
+  --default-temperature 0.6 \
+  --default-top-p 0.95 \
   --reasoning auto \
   --reasoning-parser qwen3 \
   --no-stats-footer \
