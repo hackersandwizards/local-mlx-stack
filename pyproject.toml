@@ -1,8 +1,0 @@
-[project]
-name = "local-mlx-stack"
-version = "0.2.0"
-description = "Local inference stack for Apple Silicon. Dual-backend serving: oMLX + MTPLX."
-requires-python = ">=3.11,<3.13"
-dependencies = [
-    "huggingface_hub==1.27.0",
-]
