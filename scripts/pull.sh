@@ -15,6 +15,11 @@ if [[ -z "$SNAPSHOT" ]]; then
   exit 1
 fi
 
+if ! compgen -G "$SNAPSHOT/*.safetensors" >/dev/null; then
+  echo "✗ $HF_REPO has no weights yet (README-only placeholder). Not linking." >&2
+  exit 1
+fi
+
 LINK_DIR="$(backend_link_dir "$BACKEND")"
 mkdir -p "$LINK_DIR"
 ln -sfn "$SNAPSHOT" "$LINK_DIR/$MODEL_ID"

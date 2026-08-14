@@ -5,7 +5,8 @@ Local MLX inference stack on this MacBook Pro (M3 Max, 64 GB unified memory, ~40
 ## Backends & models
 
 - **`qwen3.6-35b`** *(default)* — `mlx-community/Qwen3.6-35B-A3B-4bit` (MoE, 35B total / 3B active, 4-bit). Served by **oMLX** on `:8080`. Text + tools, ~90 tok/s.
-- **`qwen3.6-27b`** — `Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed` (dense 27B, 4-bit main + INT4 MTP sidecar). Served by **MTPLX** on `:8001`. Text + image + video + tools, ~25 tok/s with MTP on (~17 without).
+- **`qwen3.6-27b`** — `Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed` (dense 27B, 4-bit main + INT4 MTP sidecar). Served by **MTPLX** on `:8001`. Text + image + video + tools, ~40 tok/s with MTP on (measured 2026-08-14, mtplx 2.6.0).
+- **`qwen3.8-27b`** — registered on `:8002`, weights pending; the upstream MTPLX build is still a README-only placeholder. Same `qwen3_5` architecture as the 3.6-27B (configs differ only in `transformers_version`), so it is a checkpoint swap. Qwen3.8 has no 35B-class sibling — the MoE is 2.4T-A95B and does not fit — so the oMLX slot stays on 3.6-35B.
 
 ## Serving
 
@@ -17,7 +18,7 @@ Local MLX inference stack on this MacBook Pro (M3 Max, 64 GB unified memory, ~40
 
 ## Why this shape (2026-05-14 dual-backend migration)
 
-- MTPLX's verified gate is the `qwen3-next-mtp` architecture; the 35B A3B is `qwen3_5_moe` and rejects. A MoE with only 3B active has too little verify-cost to amortize speculative drafting, so 35B stays on oMLX.
+- The 35B A3B is `qwen3_5_moe` and MTPLX rejects it. A MoE with only 3B active has too little verify-cost to amortize speculative drafting, so 35B stays on oMLX. (MTPLX 2.5.0 dropped the hard-coded `qwen3-next-mtp` name and now loads through the architecture class a checkpoint declares, plus any `mtp_num_hidden_layers`; the tier gate itself is unchanged.)
 - The Youssofal repack of Qwen3.6-27B is the only verified-tier MTPLX checkpoint today; it preserves vision + video.
 - Quality tradeoff: 4-bit vs prior unsloth 6-bit dynamic — small for instruction-following/coding, more visible on math/long-context.
 
@@ -33,4 +34,6 @@ Local MLX inference stack on this MacBook Pro (M3 Max, 64 GB unified memory, ~40
 - New MTPLX models: confirm `mtplx inspect <path>` returns `tier: verified` + `runtime_compatibility: native` before wiring (it refuses otherwise without `--unsafe-force-unverified`).
 - Benchmarks: `just bench <name>` (the 27B path hits `:8001` via `PORT=` in its `.env`).
 - Reasoning split: oMLX/MTPLX split `reasoning_content` server-side in streaming only; non-streaming puts thinking into `content`. SSE clients use `--reasoning-parser qwen3`.
+- Backend CLI flags drift between releases and the scripts fail closed on unknown ones. Check `omlx serve --help` / `mtplx quickstart --help` against the serve scripts after a `brew upgrade`, and match process names for `just stop` against `pgrep -fl` rather than the command you typed (oMLX execs itself as `omlx-server`).
+- Qwen3.8 adds `reasoning_effort` with `xhigh` as the default, which is expensive on a dense 27B. MTPLX 2.6.0's `--reasoning-effort` accepts only `auto|low|medium|high`; oMLX passthrough is still an open PR (jundot/omlx#2653). Set it per client rather than inheriting the default.
 - **Verify before dismissing model names.** When the user names a model/version not in training data (cutoff Jan 2026; the clock may be months ahead), run one `WebSearch` before pushing back — confidently-wrong is worse than uncertain. (e.g. Qwen3.6-27B released 2026-04-22, post-cutoff.)
