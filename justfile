@@ -28,8 +28,9 @@ bench NAME=DEFAULT_MODEL:
 status:
     @scripts/status.sh
 
+# oMLX renames itself to 'omlx-server' after exec, so match both spellings.
 stop:
-    @pkill -f 'omlx serve' && echo "✓ omlx stopped" || echo "(no omlx running)"
+    @pkill -f 'omlx[- ]serve' && echo "✓ omlx stopped" || echo "(no omlx running)"
     @pkill -f 'mtplx.server.openai' && echo "✓ mtplx stopped" || echo "(no mtplx running)"
 
 disk:

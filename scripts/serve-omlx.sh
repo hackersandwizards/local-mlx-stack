@@ -2,11 +2,11 @@
 set -euo pipefail
 # shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
-# Invoked by serve.sh after load_model. Expects MODEL_ID, PORT, MAX_MODEL_MEMORY in env.
+# Invoked by serve.sh after load_model. Expects MODEL_ID, PORT, MEMORY_GUARD_GB in env.
 : "${MODEL_ID:?MODEL_ID not set}"
 : "${PORT:?PORT not set}"
 
-WARMUP_TIMEOUT_S=120  # oMLX cold-load + prefix-cache setup; 6-bit ~29 GB takes ~60–90 s on M3 Max
+WARMUP_TIMEOUT_S=120  # oMLX cold-load + prefix-cache setup; 4-bit ~19 GB takes ~40–60 s on M3 Max
 
 WARMUP_PAYLOAD=$(chat_payload "hi")
 CHAT_URL=$(chat_url)
@@ -29,7 +29,8 @@ exec omlx serve \
   --model-dir "$OMLX_MODELS_DIR" \
   --host 127.0.0.1 \
   --port "$PORT" \
-  --max-model-memory "${MAX_MODEL_MEMORY:-35GB}" \
+  --memory-guard-gb "${MEMORY_GUARD_GB:-35}" \
+  --no-hf-cache \
   --paged-ssd-cache-dir "$HOME/.omlx/cache" \
   --paged-ssd-cache-max-size 50GB \
   --hot-cache-max-size 8GB \
