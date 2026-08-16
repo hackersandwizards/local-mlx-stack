@@ -1,4 +1,4 @@
-DEFAULT_MODEL := "qwen3.6-27b"
+DEFAULT_MODEL := "qwen3.8-27b"
 
 default:
     @just status
@@ -23,4 +23,3 @@ status:
 
 stop:
     @mtplx stop --port 8001 --json > /dev/null 2>&1 && echo "✓ :8001 stopped" || echo "(nothing on :8001)"
-    @mtplx stop --port 8002 --json > /dev/null 2>&1 && echo "✓ :8002 stopped" || echo "(nothing on :8002)"

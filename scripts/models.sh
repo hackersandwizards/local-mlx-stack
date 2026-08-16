@@ -7,16 +7,20 @@ MODELS_DIR="${MTPLX_MODEL_DIR:-$HOME/.mtplx/models}"
 # Long-context coding and agent sessions. See README for the measurement.
 PROFILE=sustained
 
+# Every served id. doctor.sh and the justfile iterate this rather than
+# repeating the list.
+ALL_MODELS="qwen3.8-27b"
+
 load_model() {
   case "${1:-}" in
-    qwen3.6-27b)
-      HF_REPO=Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed
-      PORT=8001; TEMPERATURE=0.6; TOP_P=0.95; TOP_K=20 ;;
     qwen3.8-27b)
       HF_REPO=Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed
-      PORT=8002; TEMPERATURE=1.0; TOP_P=0.95; TOP_K=20 ;;
+      PORT=8001; TEMPERATURE=1.0; TOP_P=0.95; TOP_K=20
+      # The model card defaults to xhigh, which is expensive on a dense 27B.
+      # MTPLX's own coding default is medium; pin it rather than inherit.
+      REASONING_EFFORT=medium ;;
     *)
-      echo "✗ unknown model '${1:-}'. Known: qwen3.6-27b qwen3.8-27b" >&2
+      echo "✗ unknown model '${1:-}'. Known: $ALL_MODELS" >&2
       return 1 ;;
   esac
   MODEL_ID="$1"

@@ -2,7 +2,7 @@
 set -euo pipefail
 # shellcheck source=models.sh
 source "$(dirname "$0")/models.sh"
-load_model "${1:-qwen3.6-27b}"
+load_model "${1:-qwen3.8-27b}"
 
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
   echo "✗ port $PORT already in use. Run 'just stop'." >&2
@@ -25,6 +25,7 @@ exec mtplx quickstart \
   --default-top-p "$TOP_P" \
   --default-top-k "$TOP_K" \
   --reasoning auto \
+  --reasoning-effort "$REASONING_EFFORT" \
   --reasoning-parser qwen3 \
   --no-stats-footer \
   --yes

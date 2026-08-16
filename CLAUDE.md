@@ -4,8 +4,7 @@ Local MLX inference on this MacBook Pro (M3 Max, 64 GB unified memory, ~400 GB/s
 
 ## Model
 
-- **`qwen3.6-27b`** *(default)* — `Youssofal/Qwen3.6-27B-MTPLX-Optimized-Speed` (dense 27B, 4-bit main + INT4 MTP sidecar), MTPLX on `:8001`. Text + image + video + tools, ~40 tok/s.
-- **`qwen3.8-27b`** — registered on `:8002`, weights pending. Same `qwen3_5` architecture as the 3.6-27B, so it is a checkpoint swap, not a runtime change. Replaces the 3.6 once it is benched.
+- **`qwen3.8-27b`** — `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed` (dense 27B, 4-bit g32 with 8-bit embeddings and last 8 MLP blocks, 16-bit GDN/norms/MTP head), MTPLX on `:8001`. Text + image + video + tools, 32-33 tok/s. Sole model since 2026-08-16.
 
 ## Serving
 
@@ -18,8 +17,12 @@ Local MLX inference on this MacBook Pro (M3 Max, 64 GB unified memory, ~400 GB/s
 
 - Dropped oMLX and `qwen3.6-35b` (MoE A3B, ~92 tok/s) on the user's call: quality per token over bulk throughput. The cost is real and not recoverable here — MTPLX rejects `qwen3_5_moe`, and a MoE with 3B active has too little verify-cost to amortize speculative drafting, so there is no fast lane left.
 - With one backend the repo stopped needing a backend dispatch, two symlink dirs, per-model env files, and a Python layer for `hf download`. MTPLX covers pull, models, status, stop, inspect, and client wiring natively; what remains here is the sampling preset, the serve invocation, and a tok/s bench.
-- Qwen3.8 has no 35B-class sibling — the MoE is 2.4T-A95B and does not fit — so nothing changes that decision when 3.8 lands.
+- Qwen3.8 has no 35B-class sibling — the MoE is 2.4T-A95B and does not fit — so nothing changed that decision when 3.8 landed.
 - Quality tradeoff on the 4-bit repack vs the prior unsloth 6-bit dynamic: small for instruction-following and coding, more visible on math and long context.
+
+## Why MTPLX (checked 2026-08-16)
+
+Not preference — lack of competition. On Metal, llama.cpp's MTP is a net loss at every setting ([#23752](https://github.com/ggml-org/llama.cpp/issues/23752): -11% to -24%; the per-step Metal kernel launch costs more than the speculation saves). mlx-lm's native MTP is [PR #990](https://github.com/ml-explore/mlx-lm/pull/990), open since March 2026, Qwen3.5/3.6 only. mlx-vlm can use `mlx-community/Qwen3.8-27B-MTP-4bit` as a draft model from the CLI, but its server has no speculative-decoding support ([#981](https://github.com/Blaizzy/mlx-vlm/issues/981), closed without a branch). MTPLX is therefore the only way to get MTP behind an OpenAI-compatible endpoint here. Re-check if PR #990 merges and picks up 3.8.
 
 ## Clients
 
@@ -32,8 +35,10 @@ Local MLX inference on this MacBook Pro (M3 Max, 64 GB unified memory, ~400 GB/s
 
 - Before recommending model changes, read `scripts/models.sh` for what is registered and `mtplx models` for what is on disk.
 - New models: confirm `mtplx inspect <path>` returns `tier: verified` + `runtime_compatibility: native` before wiring (it refuses otherwise without `--unsafe-force-unverified`). `just doctor` checks this.
-- Benchmarks: `just bench <name>`. Throughput swings several tok/s with thermal state, so a single run ranks nothing — alternate the configs under test and give the machine a cooldown between them.
-- Backend CLI flags drift between releases and the scripts fail closed on unknown ones. Check `mtplx quickstart --help` against `serve.sh` after a `brew upgrade`, and match process names against `pgrep -fl` rather than the command you typed.
+- Benchmarks: `just bench <name>`. Throughput swings several tok/s with thermal state, so a single run ranks nothing — alternate the configs under test and give the machine a cooldown between them. There is also a warmup ramp of about five runs after a server start (measured 2026-08-16: 18.6 climbing to 33.3 tok/s over seven runs). Discard the ramp before taking a median, or you will report a third less than the real number.
+- Backend CLI flags drift between releases and the scripts fail closed on unknown ones. Check `mtplx quickstart --help` against `serve.sh` after a `brew upgrade`, and match process names against `pgrep -fl` rather than the command you typed. Read the installed `--help` before writing anything here about what a flag accepts; this file carried a wrong claim about `--reasoning-effort` for two days because it was written from a release note instead.
 - Reasoning split: MTPLX splits `reasoning_content` server-side in streaming only; non-streaming puts thinking into `content`. SSE clients use `--reasoning-parser qwen3`.
-- Qwen3.8 adds `reasoning_effort` with `xhigh` as the default, which is expensive on a dense 27B. MTPLX 2.6.0's `--reasoning-effort` accepts only `auto|low|medium|high`. Set it per client rather than inheriting the default.
+- `reasoning_effort` lives in `scripts/models.sh` (`medium`), not in the client configs. MTPLX 2.7.1 accepts `auto|low|medium|high|xhigh` on the flag and per request; measured cost, same prompt: `low` 1891, `medium` 2439, `xhigh` 3801 completion tokens.
+- `--preserve-thinking auto` resolves differently per model: `scoped` for 3.6, **preserve-all** for 3.8, because that is its trained contract. Agent loops accumulate context faster on 3.8 as a result.
+- `response_format: json_schema` needs `llguidance`, which the Homebrew formula omits from its `server` extra. It fails closed. `just doctor` checks it; a `brew upgrade` builds a fresh venv and drops the manual install.
 - **Verify before dismissing model names.** When the user names a model/version not in training data (cutoff Jan 2026; the clock may be months ahead), run one `WebSearch` before pushing back — confidently-wrong is worse than uncertain. (e.g. Qwen3.8-27B released 2026-08-14, post-cutoff.)

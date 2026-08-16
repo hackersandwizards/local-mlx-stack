@@ -3,7 +3,7 @@ set -euo pipefail
 # End-to-end decode throughput. `mtplx tune` measures draft depth, not tok/s.
 # shellcheck source=models.sh
 source "$(dirname "$0")/models.sh"
-load_model "${1:-qwen3.6-27b}"
+load_model "${1:-qwen3.8-27b}"
 
 URL="http://127.0.0.1:$PORT/v1/chat/completions"
 PROMPT="Write a 200-word technical summary of how Bloom filters work."
