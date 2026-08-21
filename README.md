@@ -7,7 +7,7 @@ One OpenAI-compatible server on loopback: [MTPLX](https://github.com/youssofal/M
 | Name | Repo | Port | Disk | tok/s¹ | Notes |
 |---|---|---|---|---|---|
 | `qwen3.8-27b` *(default)* | `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed` | 8001 | 21.3 GB | 32-33 | Dense 27B, 4-bit g32 with 8-bit embeddings and last 8 MLP blocks, 16-bit GDN/norms/MTP head. Text + image + video + tools, verified against the running server. |
-| `qwen3.8-27b-abliterated` | `PocketAiHub/Qwen3.8-27B-Abliterated-MTPLX-Optimized-Speed` | 8001 | 21.3 GB | unmeasured | Refusal direction projected out of 80 language residual tensors; vision tower and MTP head untouched. Its `mtplx_runtime.json` names `recipe_origin` as the build above, so the quantization layout is identical and throughput should match. |
+| `qwen3.8-27b-abliterated` | `PocketAiHub/Qwen3.8-27B-Abliterated-MTPLX-Optimized-Speed` | 8001 | 21.3 GB | 34-36 | Refusal direction projected out of 80 language residual tensors; vision tower and MTP head untouched. Its `mtplx_runtime.json` names `recipe_origin` as the build above, so the quantization layout is identical and throughput should match. |
 
 Both share the port: serving is exclusive, `just serve <name>` replaces whatever is running.
 
@@ -56,20 +56,42 @@ The preset does not pin `presence_penalty`; MTPLX has `--default-presence-penalt
 
 `PROFILE` in `scripts/models.sh`, currently `turbo`, shared by both models. Until 2026-08-14 this was `performance-cold`, which MTPLX itself describes as "not recommended for long context"; from then until 2026-08-21 it was `sustained`.
 
-Measured on 2026-08-14, alternating the candidates with 90 s cooldowns so thermal drift hits both equally (300-token decode, median of three; long lane is a 1500-token decode after a 10,523-token prompt):
+Measured on the 3.8 on 2026-08-21 as part of the stack comparison below -- same run, same alternation, 300-token decode, median of ten:
 
-| Profile | short | long |
+| Profile | tok/s | vs `sustained` |
 |---|---|---|
-| `sustained` | 33.2 / 31.3 | 29.7 / 28.1 |
-| `turbo` | 35.3 / 34.3 | 31.3 / 30.2 |
+| `sustained` | 27.73 | -- |
+| `turbo` | 33.02 | **+19%** |
 
-`turbo` is 5-10% faster in both lanes and held that lead from the hotter position in each pair. It is on as of 2026-08-21, a deliberate trade: its 4-bit speculative-verify kernels are argmax- and sampler-distribution-validated but **not bit-exact against stock**, so this buys throughput with quality per token -- the opposite of the axis the 2026-08-14 migration chose. No measurement settles that; it is a judgement call, and it was made knowingly.
+The 3.6 measurement from 2026-08-14 put this gap at 5-10% (`sustained` 33.2/31.3, `turbo` 35.3/34.3 across a short and a long lane). On the 3.8 it is roughly twice that, so the profile matters more here than the old number suggested.
+
+`turbo` is on as of 2026-08-21, a deliberate trade: its 4-bit speculative-verify kernels are argmax- and sampler-distribution-validated but **not bit-exact against stock**, so this buys throughput with quality per token -- the opposite of the axis the 2026-08-14 migration chose. No measurement settles that; it is a judgement call, and it was made knowingly.
 
 Its compiled verify engages up to **32,768** tokens of context and falls back to the eager path above that, so most agent sessions stay inside it. (This README said 12,288 until 2026-08-21; that was MTPLX 2.7.1. `mtplx status` prints the current fence.) `exact` sits on the other side of the same axis and is unmeasured here.
 
-Single runs rank nothing. Absolute throughput moved by more than 50% across sessions on identical configs, driven by thermal state and how warm the session bank was.
+Single runs rank nothing: absolute throughput moved by more than 50% across sessions on identical configs, driven by thermal state and how warm the session bank was. The numbers above are medians of ten across two alternating rounds -- see below for the method.
 
-**The table above was measured on the 3.6 and still has not been re-run against the 3.8.** A run comparing `sustained`/`turbo` and MLX/MTPLX on the 3.8 was started on 2026-08-21 and aborted part-way; see `## Stack comparison` once it lands.
+## Stack comparison
+
+Is MLX or MTPLX the faster way to run this model here? Measured 2026-08-21, M3 Max 64 GB on AC power. Five configurations alternating over two rounds; per server start five warmup runs discarded and five counted; 300-token decode, 60 s cooldown. Sampling forced identical everywhere (`1.0 / 0.95 / 20`) -- `mlx_lm.server` defaults to `0.0 / 1.0 / 0` and would otherwise measure something else entirely. Session bank cleared beforehand, since `mlx_lm` has no equivalent and a warm one flatters MTPLX.
+
+| Stack | Model | Size | tok/s | vs AR baseline |
+|---|---|---|---|---|
+| MTPLX, `turbo`, MTP | own build, 4-bit g32 mixed | 21.3 GB | **33.02** | 2.03x |
+| MTPLX, `sustained`, MTP | own build, 4-bit g32 mixed | 21.3 GB | 27.73 | 1.70x |
+| `mlx_lm` | orca abliterated, 4-bit g64 | 15 GB | 20.65 | 1.27x |
+| MTPLX, `turbo`, **no MTP** | own build, 4-bit g32 mixed | 21.3 GB | 16.27 | 1.00x |
+| `mlx_lm` | orca abliterated, 6-bit g64 | 21 GB | 13.38 | 0.82x |
+
+Three separate conclusions, and only the first is causal:
+
+1. **MTP speculative decoding is worth 2.03x.** Same loader, same weights, same profile -- `--mtp` against `--no-mtp` is the only controlled comparison here, because it changes exactly one variable. This is the number that justifies the whole backend choice. For reference, PocketAiHub measured 2.35x for the same recipe on an M5 Max.
+2. **MTPLX beats `mlx_lm` by 2.47x at equal size**, 33.02 against 13.38 for the 21 GB pair. But that comparison changes backend, quantization layout *and* MTP at once, so it ranks stacks, not backends. `mlx_lm` has no MTP path for Qwen3.8 at all (see the note on MTPLX above), so this is the honest practical question -- just not a clean experiment.
+3. **Quantization size dominates on a memory-bound machine.** orca 4-bit (15 GB) runs 1.54x the 6-bit (21 GB) build of the same weights. Bandwidth, not arithmetic, is the constraint.
+
+Caveats worth carrying: macOS background jobs (`mediaanalysisd`, Spotlight) claimed 69-161% of a core across the run and would not stay quiet. Their cost is bounded, though -- configuration A ran once at 7% foreign CPU and once at 132% and lost 4.8% between them, against gaps of 60-147% being measured. Round 1 and round 2 agree within ~5% for every configuration, which is why these medians are usable at all.
+
+`mlx_lm` shows no warmup ramp: five consecutive runs sat within 1 tok/s of each other from cold. The 18.6 to 33.3 climb documented under `just bench` is MTPLX-specific, not thermal.
 
 ## Endpoints
 
