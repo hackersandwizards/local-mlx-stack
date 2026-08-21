@@ -4,10 +4,10 @@ Local MLX inference on this MacBook Pro (M3 Max, 64 GB unified memory, ~400 GB/s
 
 ## Models
 
-Serving is **exclusive**: one port, one model. `serve.sh` replaces whatever holds `:8001` instead of refusing to start, so every client config stays valid across a model switch — only the `model` id in the request changes. Two 27B models at long context do not fit 64 GB together.
+Serving is **exclusive**: one port, one model. **MTPLX ignores the requested `model` id** and answers from whatever is loaded — asking for the abliterated build while the base one runs returns the base one silently. The response's `model` field and `/v1/models` report the truth; verify there before trusting which weights answered. `serve.sh` replaces whatever holds `:8001` instead of refusing to start, so every client config stays valid across a model switch — only the `model` id in the request changes. Two 27B models at long context do not fit 64 GB together.
 
-- **`qwen3.8-27b`** *(default)* — `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed` (dense 27B, 4-bit g32 with 8-bit embeddings and last 8 MLP blocks, 16-bit GDN/norms/MTP head). Text + image + video + tools, 32-33 tok/s.
-- **`qwen3.8-27b-abliterated`** — `PocketAiHub/Qwen3.8-27B-Abliterated-MTPLX-Optimized-Speed`. Refusal-direction projection over 80 language residual tensors, vision tower untouched, MTP head preserved. Its `mtplx_runtime.json` names `recipe_origin` as the build above, so the quantization layout and size match; measured 34-36 tok/s against the other's 32-33.
+- **`qwen3.8-27b`** *(default)* — `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed` (dense 27B, 4-bit g32 with 8-bit embeddings and last 8 MLP blocks, 16-bit GDN/norms/MTP head). Text + image + video + tools, 33-37 tok/s under `turbo`.
+- **`qwen3.8-27b-abliterated`** — `PocketAiHub/Qwen3.8-27B-Abliterated-MTPLX-Optimized-Speed`. Refusal-direction projection over 80 language residual tensors, vision tower untouched, MTP head preserved. Its `mtplx_runtime.json` names `recipe_origin` as the build above, so the quantization layout, size and throughput match -- 34-36 tok/s against the other's 33-37, i.e. indistinguishable.
 
 ## Serving
 

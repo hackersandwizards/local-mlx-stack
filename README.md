@@ -6,12 +6,12 @@ One OpenAI-compatible server on loopback: [MTPLX](https://github.com/youssofal/M
 
 | Name | Repo | Port | Disk | tok/s¹ | Notes |
 |---|---|---|---|---|---|
-| `qwen3.8-27b` *(default)* | `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed` | 8001 | 21.3 GB | 32-33 | Dense 27B, 4-bit g32 with 8-bit embeddings and last 8 MLP blocks, 16-bit GDN/norms/MTP head. Text + image + video + tools, verified against the running server. |
+| `qwen3.8-27b` *(default)* | `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed` | 8001 | 21.3 GB | 33-37 | Dense 27B, 4-bit g32 with 8-bit embeddings and last 8 MLP blocks, 16-bit GDN/norms/MTP head. Text + image + video + tools, verified against the running server. |
 | `qwen3.8-27b-abliterated` | `PocketAiHub/Qwen3.8-27B-Abliterated-MTPLX-Optimized-Speed` | 8001 | 21.3 GB | 34-36 | Refusal direction projected out of 80 language residual tensors; vision tower and MTP head untouched. Its `mtplx_runtime.json` names `recipe_origin` as the build above, so the quantization layout is identical and throughput should match. |
 
 Both share the port: serving is exclusive, `just serve <name>` replaces whatever is running.
 
-¹ M3 Max 64 GB, `just bench`, 300-token decode. **The first runs are not the number.** Seven consecutive runs with 45 s cooldowns on 2026-08-16 gave 18.6, 24.1, 28.6, 28.9, 31.8, 33.3, 32.4 -- a monotone warmup ramp that only plateaus after ~5 runs. Stopping at three would have understated it by a third. Discard the ramp, then take a median.
+¹ M3 Max 64 GB, `just bench`, 300-token decode, both measured under `turbo` on 2026-08-21. The two builds are indistinguishable, as the shared quantization recipe predicts -- do not read the ranges as a difference. The earlier 32-33 for `qwen3.8-27b` was measured under `sustained` and is not comparable. **The first runs are not the number.** Seven consecutive runs with 45 s cooldowns on 2026-08-16 gave 18.6, 24.1, 28.6, 28.9, 31.8, 33.3, 32.4 -- a monotone warmup ramp that only plateaus after ~5 runs. Stopping at three would have understated it by a third. Discard the ramp, then take a median.
 
 The other two builds of the same checkpoint, if the tradeoff is ever revisited: `Bare-Speed` (16 GB) and `Optimized-Quality` (29.4 GB download, 32.7 GB peak, 8-bit g64 throughout, KL 0.00105 to the original). Quality fits in 64 GB but doubles the weight bandwidth on a memory-bound M3 Max and shrinks the session bank; it is unmeasured here.
 
@@ -100,6 +100,8 @@ http://127.0.0.1:8001/v1  -> qwen3.8-27b | qwen3.8-27b-abliterated
 ```
 
 One endpoint, one model at a time. Both ids are registered in every client, so switching means `just serve <name>` plus picking the other id in the client -- no config edit.
+
+**MTPLX does not check the requested id.** Ask for `qwen3.8-27b-abliterated` while the base model is loaded and you get an answer from the base model, no error and no warning. The response's own `model` field reports what actually served it, and `curl -s :8001/v1/models` names the loaded one -- check there, not in the client's dropdown, whenever it matters which weights answered.
 
 Clients are configured in `~/.config/zed/settings.json`, `~/.pi/agent/models.json`, and `~/.config/opencode/opencode.json`. `mtplx connect <client>` prints the settings for the ones it knows.
 
