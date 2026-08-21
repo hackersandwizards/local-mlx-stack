@@ -22,4 +22,5 @@ status:
     @mtplx status
 
 stop:
-    @mtplx stop --port 8001 --json > /dev/null 2>&1 && echo "✓ :8001 stopped" || echo "(nothing on :8001)"
+    @. scripts/models.sh && \
+      { mtplx stop --port $PORT --json > /dev/null 2>&1 && echo "✓ :$PORT stopped" || echo "(nothing on :$PORT)"; }

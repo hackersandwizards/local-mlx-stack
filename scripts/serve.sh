@@ -4,9 +4,21 @@ set -euo pipefail
 source "$(dirname "$0")/models.sh"
 load_model "${1:-qwen3.8-27b}"
 
+# Serving is exclusive: one port, one model. Replace whoever holds it rather
+# than making the caller stop it first. Wait for the port to actually clear --
+# starting into a still-bound port fails with a less obvious error.
 if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "✗ port $PORT already in use. Run 'just stop'." >&2
-  exit 1
+  echo "→ :$PORT busy, replacing"
+  mtplx stop --port "$PORT" >/dev/null 2>&1 || true
+  for _ in $(seq 30); do
+    lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1 || break
+    sleep 1
+  done
+  if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "✗ :$PORT held by something MTPLX cannot stop:" >&2
+    lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >&2
+    exit 1
+  fi
 fi
 
 if [[ ! -e "$MODEL_PATH" ]]; then
@@ -27,5 +39,6 @@ exec mtplx quickstart \
   --reasoning auto \
   --reasoning-effort "$REASONING_EFFORT" \
   --reasoning-parser qwen3 \
+  --ssd-session-cache-max-size 20GB \
   --no-stats-footer \
   --yes
