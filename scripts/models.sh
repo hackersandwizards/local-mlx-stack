@@ -12,7 +12,7 @@ PROFILE=turbo
 
 # Every served id. doctor.sh and the justfile iterate this rather than
 # repeating the list.
-ALL_MODELS="qwen3.8-27b"
+ALL_MODELS="qwen3.8-27b qwen3.6-35b"
 
 load_model() {
   case "${1:-}" in
@@ -21,6 +21,10 @@ load_model() {
       TEMPERATURE=1.0; TOP_P=0.95; TOP_K=20
       # The model card defaults to xhigh, which is expensive on a dense 27B.
       # MTPLX's own coding default is medium; pin it rather than inherit.
+      REASONING_EFFORT=medium ;;
+    qwen3.6-35b)
+      HF_REPO=Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed
+      TEMPERATURE=0.6; TOP_P=0.95; TOP_K=20
       REASONING_EFFORT=medium ;;
     *)
       echo "✗ unknown model '${1:-}'. Known: $ALL_MODELS" >&2

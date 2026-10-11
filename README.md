@@ -1,14 +1,17 @@
 # local-mlx-stack
 
-One OpenAI-compatible server on loopback: [MTPLX](https://github.com/youssofal/MTPLX) with native MTP speculative decoding, serving a dense Qwen 27B on Apple Silicon. One model on one port; `just serve` replaces whatever is running there.
+One OpenAI-compatible server on loopback: [MTPLX](https://github.com/youssofal/MTPLX) with native MTP speculative decoding, serving a dense Qwen 27B on Apple Silicon. Two models share one port, a quality one and a fast one; `just serve <name>` replaces whatever is running there.
 
 ## Models
 
 | Name | Repo | Port | Disk | tok/s¹ | Notes |
 |---|---|---|---|---|---|
-| `qwen3.8-27b` | `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality` | 8001 | 30.0 GB | 27-28 | Dense 27B, 8-bit g64 throughout, 16-bit GDN/norms/MTP head. 32.7 GB peak per the model card. Text + image + video + tools. |
+| `qwen3.8-27b` *(default)* | `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality` | 8001 | 30.0 GB | 27-28 | Dense 27B, 8-bit g64 throughout, 16-bit GDN/norms/MTP head. 32.7 GB peak per the model card. Text + image + video + tools. |
+| `qwen3.6-35b` | `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` | 8001 | 21.0 GB | 94-100² | MoE, 35B with 3B active, 4-bit g64, MTP. The fast lane: about 3.6x the throughput of the model above, from the previous Qwen generation. |
 
 ¹ M3 Max 64 GB, 300-token decode under `turbo`, MTPLX 2.12.2, measured 2026-10-11 by alternating this pack with `Optimized-Speed` (4-bit, 21.3 GB) over four rounds, eight runs per server start, 60 s cooldown, foreign CPU 65-297% throughout. Medians of rounds 2-4: Quality 27.3 / 28.0 / 27.8, Speed 35.0 / 33.2 / 34.8 -- Quality costs about 20% throughput. Round 1 is excluded and not explained: on its first start after the download Quality ran at 12.7-16.1 and Speed at 25.0-31.3. Quality per token was not measured here; the model card gives 99.3% top-1 agreement with bf16 for Quality against 96.0% for Speed (KL 0.0005 against 0.012).
+
+² Same method, measured 2026-10-11 by alternating with `qwen3.8-27b` over three rounds of eight runs, foreign CPU 41-133%. Medians per round: `qwen3.6-35b` 98.3 / 94.2 / 100.4, `qwen3.8-27b` 26.4 / 26.9 / 27.6. No run of the 35B fell below 90.0. Its quality against the 27B is unmeasured here.
 
 The warmup ramp recorded on 2026-08-16 (18.6, 24.1, 28.6, 28.9, 31.8, 33.3, 32.4 over seven runs) did not appear on 2.12.2 in rounds 2-4: the first counted run after `bench.sh`'s one-token warmup was already at the plateau. Still read the first runs before taking a median.
 
@@ -46,6 +49,7 @@ What is left here is what MTPLX does not persist: the per-model sampling preset,
 Qwen publishes a different preset per release, so it belongs next to the model and lives in `scripts/models.sh`. MTPLX persists none of it: `mtplx settings set` only reaches a running daemon, and `~/.mtplx/config.toml` covers the default model and profile, not sampling.
 
 - `qwen3.8-27b`: `temp 1.0`, `top_p 0.95`, `top_k 20` -- the official sampler from the MTPLX 2.7.0 release notes.
+- `qwen3.6-35b`: `temp 0.6`, `top_p 0.95`, `top_k 20` -- the `sampler` in the pack's own `mtplx_runtime.json`.
 
 The preset does not pin `presence_penalty`; MTPLX has `--default-presence-penalty` but the thinking preset sets it to 0 anyway. Clients override per request.
 
@@ -53,7 +57,7 @@ The preset does not pin `presence_penalty`; MTPLX has `--default-presence-penalt
 
 ## Profile
 
-`PROFILE` in `scripts/models.sh`, currently `turbo`. Until 2026-08-14 this was `performance-cold`, which MTPLX itself describes as "not recommended for long context"; from then until 2026-08-21 it was `sustained`.
+`PROFILE` in `scripts/models.sh`, currently `turbo`, shared by both models. Until 2026-08-14 this was `performance-cold`, which MTPLX itself describes as "not recommended for long context"; from then until 2026-08-21 it was `sustained`.
 
 Measured on the 3.8 `Optimized-Speed` pack on 2026-08-21 as part of the stack comparison below -- same run, same alternation, 300-token decode, median of ten:
 
@@ -95,8 +99,10 @@ Caveats worth carrying: macOS background jobs (`mediaanalysisd`, Spotlight) clai
 ## Endpoints
 
 ```
-http://127.0.0.1:8001/v1  -> qwen3.8-27b
+http://127.0.0.1:8001/v1  -> qwen3.8-27b | qwen3.6-35b
 ```
+
+One endpoint, one model at a time. Both ids are registered in every client, so switching means `just serve <name>` plus picking the other id in the client.
 
 **MTPLX does not check the requested id.** It answers from whatever is loaded, no error and no warning. The response's own `model` field and `curl -s :8001/v1/models` name the loaded weights -- check there, not in the client's dropdown.
 

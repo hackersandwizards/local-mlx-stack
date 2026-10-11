@@ -4,9 +4,10 @@ Local MLX inference on this MacBook Pro (M3 Max, 64 GB unified memory, ~400 GB/s
 
 ## Models
 
-One model on one port. **MTPLX ignores the requested `model` id** and answers from whatever is loaded. The response's `model` field and `/v1/models` report the truth; verify there before trusting which weights answered. `serve.sh` replaces whatever holds `:8001` instead of refusing to start.
+Serving is **exclusive**: one port, one model at a time. **MTPLX ignores the requested `model` id** and answers from whatever is loaded. The response's `model` field and `/v1/models` report the truth; verify there before trusting which weights answered. `serve.sh` replaces whatever holds `:8001` instead of refusing to start, so every client config stays valid across a model switch.
 
 - **`qwen3.8-27b`** — `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality` (dense 27B, 8-bit g64, 16-bit GDN/norms/MTP head, 30.0 GB). Text + image + video + tools, 27-28 tok/s under `turbo`. Chosen 2026-10-11 over `Optimized-Speed` (4-bit, 33-35 tok/s in the same alternating run) for fidelity: 99.3% against 96.0% top-1 agreement with bf16 per the model card, not measured here. README has the run.
+- **`qwen3.6-35b`** — `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` (MoE, 3B active, 4-bit g64, 21.0 GB). The fast lane: 94-100 tok/s under `turbo`, measured 2026-10-11 by alternating with the model above. Previous Qwen generation; its quality against the 27B is unmeasured here.
 
 ## Serving
 
@@ -17,7 +18,7 @@ One model on one port. **MTPLX ignores the requested `model` id** and answers fr
 
 ## Why this shape (2026-08-14 single-backend migration)
 
-- Dropped oMLX and `qwen3.6-35b` (MoE A3B, ~92 tok/s) on the user's call: quality per token over bulk throughput. The cost is real and not recoverable here — MTPLX rejected `qwen3_5_moe` then. Read on Hugging Face 2026-10-11, not inspected locally: `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed-FP16` (21 GB) now packs that MoE with MTP, its card giving 138 tok/s at D1 against 94 autoregressive on unnamed hardware. A fast lane exists again if bulk throughput is ever wanted.
+- Dropped oMLX and `qwen3.6-35b` (MoE A3B, ~92 tok/s) on the user's call: quality per token over bulk throughput. The cost is real and not recoverable here — MTPLX rejected `qwen3_5_moe` then. By 2.12.2 it serves that MoE with MTP, and `qwen3.6-35b` came back on 2026-10-11 as the fast lane.
 - With one backend the repo stopped needing a backend dispatch, two symlink dirs, per-model env files, and a Python layer for `hf download`. MTPLX covers pull, models, status, stop, inspect, and client wiring natively; what remains here is the sampling preset, the serve invocation, and a tok/s bench.
 - Qwen3.8 has no sibling that fits 64 GB: the MoE is 2.4T-A95B, and Flash-Next (125B, 6B active) peaks at 87 GiB in its 4-bit MTPLX pack, 78 GiB in Bare Speed. Flash-Next beats the 27B on the vendor's coding benchmarks, so it is the upgrade if this machine is ever replaced by one with 96 GB or more. Qwen 4 27B was announced 2026-09-22 with no weights as of 2026-10-11.
 
