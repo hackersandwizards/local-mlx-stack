@@ -1,19 +1,18 @@
 # local-mlx-stack
 
-One OpenAI-compatible server on loopback: [MTPLX](https://github.com/youssofal/MTPLX) with native MTP speculative decoding, serving a dense Qwen 27B on Apple Silicon. Two models share the port -- serving is exclusive, `just serve <name>` replaces whatever is running.
+One OpenAI-compatible server on loopback: [MTPLX](https://github.com/youssofal/MTPLX) with native MTP speculative decoding, serving a dense Qwen 27B on Apple Silicon. One model on one port; `just serve` replaces whatever is running there.
 
 ## Models
 
 | Name | Repo | Port | Disk | tok/s¹ | Notes |
 |---|---|---|---|---|---|
-| `qwen3.8-27b` *(default)* | `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Speed` | 8001 | 21.3 GB | 33-37 | Dense 27B, 4-bit g32 with 8-bit embeddings and last 8 MLP blocks, 16-bit GDN/norms/MTP head. Text + image + video + tools, verified against the running server. |
-| `qwen3.8-27b-abliterated` | `PocketAiHub/Qwen3.8-27B-Abliterated-MTPLX-Optimized-Speed` | 8001 | 21.3 GB | 33-37 | Refusal direction projected out of 80 language residual tensors; vision tower and MTP head untouched. Its `mtplx_runtime.json` names `recipe_origin` as the build above, so the quantization layout is identical and throughput should match. |
+| `qwen3.8-27b` | `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality` | 8001 | 30.0 GB | 27-28 | Dense 27B, 8-bit g64 throughout, 16-bit GDN/norms/MTP head. 32.7 GB peak per the model card. Text + image + video + tools. |
 
-Both share the port: serving is exclusive, `just serve <name>` replaces whatever is running.
+¹ M3 Max 64 GB, 300-token decode under `turbo`, MTPLX 2.12.2, measured 2026-10-11 by alternating this pack with `Optimized-Speed` (4-bit, 21.3 GB) over four rounds, eight runs per server start, 60 s cooldown, foreign CPU 65-297% throughout. Medians of rounds 2-4: Quality 27.3 / 28.0 / 27.8, Speed 35.0 / 33.2 / 34.8 -- Quality costs about 20% throughput. Round 1 is excluded and not explained: on its first start after the download Quality ran at 12.7-16.1 and Speed at 25.0-31.3. Quality per token was not measured here; the model card gives 99.3% top-1 agreement with bf16 for Quality against 96.0% for Speed (KL 0.0005 against 0.012).
 
-¹ M3 Max 64 GB, 300-token decode, both under `turbo`, measured 2026-08-21 by alternating the two models over two rounds (five warmup runs discarded per server start, five counted). **The two builds are not distinguishable here**, as the shared quantization recipe predicts: the gap between their medians is 2.45 tok/s while two rounds of the *same* model differ by up to 5.63. Filtering to runs under 50% foreign CPU narrows an apparent 11.5% lead to 3.9% -- that lead was background load, not the model. The earlier 32-33 figure was measured under `sustained` and is not comparable. **The first runs are not the number.** Seven consecutive runs with 45 s cooldowns on 2026-08-16 gave 18.6, 24.1, 28.6, 28.9, 31.8, 33.3, 32.4 -- a monotone warmup ramp that only plateaus after ~5 runs. Stopping at three would have understated it by a third. Discard the ramp, then take a median.
+The warmup ramp recorded on 2026-08-16 (18.6, 24.1, 28.6, 28.9, 31.8, 33.3, 32.4 over seven runs) did not appear on 2.12.2 in rounds 2-4: the first counted run after `bench.sh`'s one-token warmup was already at the plateau. Still read the first runs before taking a median.
 
-The other two builds of the same checkpoint, if the tradeoff is ever revisited: `Bare-Speed` (16 GB) and `Optimized-Quality` (29.4 GB download, 32.7 GB peak, 8-bit g64 throughout, KL 0.00105 to the original). Quality fits in 64 GB but doubles the weight bandwidth on a memory-bound M3 Max and shrinks the session bank; it is unmeasured here.
+The other builds of the same checkpoint: `Optimized-Speed` (4-bit g32 mixed, 21.3 GB, the default here until 2026-10-11) and `Bare-Speed` (16 GB, unmeasured here).
 
 ## Daily use
 
@@ -54,9 +53,9 @@ The preset does not pin `presence_penalty`; MTPLX has `--default-presence-penalt
 
 ## Profile
 
-`PROFILE` in `scripts/models.sh`, currently `turbo`, shared by both models. Until 2026-08-14 this was `performance-cold`, which MTPLX itself describes as "not recommended for long context"; from then until 2026-08-21 it was `sustained`.
+`PROFILE` in `scripts/models.sh`, currently `turbo`. Until 2026-08-14 this was `performance-cold`, which MTPLX itself describes as "not recommended for long context"; from then until 2026-08-21 it was `sustained`.
 
-Measured on the 3.8 on 2026-08-21 as part of the stack comparison below -- same run, same alternation, 300-token decode, median of ten:
+Measured on the 3.8 `Optimized-Speed` pack on 2026-08-21 as part of the stack comparison below -- same run, same alternation, 300-token decode, median of ten:
 
 | Profile | tok/s | vs `sustained` |
 |---|---|---|
@@ -65,7 +64,7 @@ Measured on the 3.8 on 2026-08-21 as part of the stack comparison below -- same 
 
 The 3.6 measurement from 2026-08-14 put this gap at 5-10% (`sustained` 33.2/31.3, `turbo` 35.3/34.3 across a short and a long lane). On the 3.8 it is roughly twice that, so the profile matters more here than the old number suggested.
 
-`turbo` is on as of 2026-08-21, a deliberate trade: its 4-bit speculative-verify kernels are argmax- and sampler-distribution-validated but **not bit-exact against stock**, so this buys throughput with quality per token -- the opposite of the axis the 2026-08-14 migration chose. No measurement settles that; it is a judgement call, and it was made knowingly.
+`turbo` is on as of 2026-08-21, a deliberate trade: its 4-bit speculative-verify kernels are argmax- and sampler-distribution-validated but **not bit-exact against stock**, so this buys throughput with quality per token -- the opposite of the axis the 2026-08-14 migration chose. No measurement settles that; it is a judgement call, and it was made knowingly. Whether those kernels engage on the 8-bit pack is unverified; `turbo` against `sustained` is unmeasured on it.
 
 Its compiled verify engages up to **32,768** tokens of context and falls back to the eager path above that, so most agent sessions stay inside it. (This README said 12,288 until 2026-08-21; that was MTPLX 2.7.1. `mtplx status` prints the current fence.) `exact` sits on the other side of the same axis and is unmeasured here.
 
@@ -73,7 +72,7 @@ Single runs rank nothing: absolute throughput moved by more than 50% across sess
 
 ## Stack comparison
 
-Is MLX or MTPLX the faster way to run this model here? Measured 2026-08-21, M3 Max 64 GB on AC power. Five configurations alternating over two rounds; per server start five warmup runs discarded and five counted; 300-token decode, 60 s cooldown. Sampling forced identical everywhere (`1.0 / 0.95 / 20`) -- `mlx_lm.server` defaults to `0.0 / 1.0 / 0` and would otherwise measure something else entirely. Session bank cleared beforehand, since `mlx_lm` has no equivalent and a warm one flatters MTPLX.
+Is MLX or MTPLX the faster way to run this model here? Measured 2026-08-21 on the `Optimized-Speed` pack, M3 Max 64 GB on AC power. Five configurations alternating over two rounds; per server start five warmup runs discarded and five counted; 300-token decode, 60 s cooldown. Sampling forced identical everywhere (`1.0 / 0.95 / 20`) -- `mlx_lm.server` defaults to `0.0 / 1.0 / 0` and would otherwise measure something else entirely. Session bank cleared beforehand, since `mlx_lm` has no equivalent and a warm one flatters MTPLX.
 
 | Stack | Model | Size | tok/s | vs AR baseline |
 |---|---|---|---|---|
@@ -96,12 +95,10 @@ Caveats worth carrying: macOS background jobs (`mediaanalysisd`, Spotlight) clai
 ## Endpoints
 
 ```
-http://127.0.0.1:8001/v1  -> qwen3.8-27b | qwen3.8-27b-abliterated
+http://127.0.0.1:8001/v1  -> qwen3.8-27b
 ```
 
-One endpoint, one model at a time. Both ids are registered in every client, so switching means `just serve <name>` plus picking the other id in the client -- no config edit.
-
-**MTPLX does not check the requested id.** Ask for `qwen3.8-27b-abliterated` while the base model is loaded and you get an answer from the base model, no error and no warning. The response's own `model` field reports what actually served it, and `curl -s :8001/v1/models` names the loaded one -- check there, not in the client's dropdown, whenever it matters which weights answered.
+**MTPLX does not check the requested id.** It answers from whatever is loaded, no error and no warning. The response's own `model` field and `curl -s :8001/v1/models` name the loaded weights -- check there, not in the client's dropdown.
 
 Clients are configured in `~/.config/zed/settings.json`, `~/.pi/agent/models.json`, and `~/.config/opencode/opencode.json`. `mtplx connect <client>` prints the settings for the ones it knows.
 
