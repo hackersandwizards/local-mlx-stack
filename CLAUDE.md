@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Local MLX inference on this MacBook Pro (M3 Max, 64 GB unified memory, ~400 GB/s). Path: `/Users/bstemmildt/opt/local-mlx-stack`. Single backend, OpenAI-compatible.
+Local MLX inference on this MacBook Pro (M3 Max, 64 GB unified memory, ~400 GB/s). Path: `/Users/bstemmildt/dev/hackersandwizards/internal/local-mlx-stack`. Single backend, OpenAI-compatible.
 
 ## Models
 
