@@ -1,6 +1,22 @@
 # local-mlx-stack
 
-One OpenAI-compatible server on loopback: [MTPLX](https://github.com/youssofal/MTPLX) with native MTP speculative decoding, serving a dense Qwen 27B on Apple Silicon. Two models share one port, a quality one and a fast one; `just serve <name>` replaces whatever is running there.
+One OpenAI-compatible server on loopback: [MTPLX](https://github.com/youssofal/MTPLX) with native MTP speculative decoding, serving Qwen models on Apple Silicon. Two models share one port, a quality one and a fast one; `just serve <name>` replaces whatever is running there.
+
+## Requirements and first run
+
+An Apple Silicon Mac with room for the model in unified memory: the default pack peaks at 32.7 GB, and our measurements below come from an M3 Max with 64 GB. You also need [`just`](https://github.com/casey/just), `jq`, and MTPLX with `llguidance`, installed by [mise](https://mise.jdx.dev) from this entry in `~/.config/mise/config.toml`:
+
+```toml
+"pypi:git+https://github.com/youssofal/MTPLX" = { version = "latest", with = ["llguidance"] }
+```
+
+```bash
+mise install
+just pull                # the default model, about 30 GB
+just pull qwen3.6-35b    # the fast model, 21 GB: just doctor checks both
+just doctor              # contract check per model
+just serve               # http://127.0.0.1:8001/v1, Ctrl-C to stop
+```
 
 ## Models
 
@@ -25,7 +41,7 @@ just bench [NAME]   # end-to-end tok/s against the model's port
 just pull [NAME]    # mtplx pull + symlink to the short served id
 just status         # mtplx status
 just models         # mtplx models
-just stop           # stops whatever holds the port
+just stop           # stops the MTPLX daemon on the port
 just doctor         # contract check per model, then mtplx status
 ```
 
@@ -53,7 +69,7 @@ Qwen publishes a different preset per release, so it belongs next to the model a
 
 The preset does not pin `presence_penalty`; MTPLX has `--default-presence-penalty` but the thinking preset sets it to 0 anyway. Clients override per request.
 
-`REASONING_EFFORT` sits in the same registry entry. The model card defaults to `xhigh`, which is expensive on a dense 27B; MTPLX's own coding default is `medium`, so `serve.sh` pins that rather than inheriting. Measured per request on 2026-08-16, same prompt: `low` 1891, `medium` 2439, `xhigh` 3801 completion tokens. Clients override per request via `reasoning_effort`.
+`REASONING_EFFORT` sits in the same registry entry. The model card defaults to `xhigh`, which is expensive on a dense 27B; MTPLX's own coding default is `medium`, so the registry pins that and `serve.sh` passes it on. Measured per request on 2026-08-16, same prompt: `low` 1891, `medium` 2439, `xhigh` 3801 completion tokens. Clients override per request via `reasoning_effort`.
 
 ## Profile
 
@@ -89,12 +105,12 @@ Is MLX or MTPLX the faster way to run this model here? Measured 2026-08-21 on th
 Three separate conclusions, and only the first is causal:
 
 1. **MTP speculative decoding is worth 2.03x.** Same loader, same weights, same profile -- `--mtp` against `--no-mtp` is the only controlled comparison here, because it changes exactly one variable. This is the number that justifies the whole backend choice. For reference, PocketAiHub measured 2.35x for the same recipe on an M5 Max.
-2. **MTPLX beats `mlx_lm` by 2.47x at equal size**, 33.02 against 13.38 for the 21 GB pair. But that comparison changes backend, quantization layout *and* MTP at once, so it ranks stacks, not backends. `mlx_lm` has no MTP path for Qwen3.8 at all (see the note on MTPLX above), so this is the honest practical question -- just not a clean experiment.
+2. **MTPLX beats `mlx_lm` by 2.47x at equal size**, 33.02 against 13.38 for the 21 GB pair. But that comparison changes backend, quantization layout *and* MTP at once, so it ranks stacks, not backends. `mlx_lm` has no MTP path for Qwen3.8 at all (see "Why MTPLX" in `CLAUDE.md`), so this is the honest practical question -- just not a clean experiment.
 3. **Quantization size dominates on a memory-bound machine.** orca 4-bit (15 GB) runs 1.54x the 6-bit (21 GB) build of the same weights. Bandwidth, not arithmetic, is the constraint.
 
 Caveats worth carrying: macOS background jobs (`mediaanalysisd`, Spotlight) claimed 69-161% of a core across the run and would not stay quiet. Their cost is bounded, though -- configuration A ran once at 7% foreign CPU and once at 132% and lost 4.8% between them, against gaps of 60-147% being measured. Round 1 and round 2 agree within ~5% for every configuration, which is why these medians are usable at all.
 
-`mlx_lm` shows no warmup ramp: five consecutive runs sat within 1 tok/s of each other from cold. The 18.6 to 33.3 climb documented under `just bench` is MTPLX-specific, not thermal.
+`mlx_lm` shows no warmup ramp: five consecutive runs sat within 1 tok/s of each other from cold. The 18.6 to 33.3 climb recorded under Models is MTPLX-specific, not thermal.
 
 ## Endpoints
 
@@ -104,7 +120,7 @@ http://127.0.0.1:8001/v1  -> qwen3.8-27b | qwen3.6-35b
 
 One endpoint, one model at a time. Both ids are registered in every client, so switching means `just serve <name>` plus picking the other id in the client.
 
-**MTPLX does not check the requested id.** It answers from whatever is loaded, no error and no warning. The response's own `model` field and `curl -s :8001/v1/models` name the loaded weights -- check there, not in the client's dropdown.
+**MTPLX does not check the requested id.** It answers from whatever is loaded, no error and no warning. The response's own `model` field and `curl -s http://127.0.0.1:8001/v1/models` name the loaded weights -- check there, not in the client's dropdown.
 
 Clients are configured in `~/.config/zed/settings.json`, `~/.pi/agent/models.json`, and `~/.config/opencode/opencode.json`. `mtplx connect <client>` prints the settings for the ones it knows.
 
@@ -117,3 +133,7 @@ Clients are configured in `~/.config/zed/settings.json`, `~/.pi/agent/models.jso
 - `response_format: json_schema` returns `requires the optional llguidance dependency`: MTPLX's `server` extra comes without `llguidance`. It fails closed rather than returning unconstrained output. The mise entry carries `with = ["llguidance"]`; if that is missing, add it and run `mise install`. `just doctor` checks it.
 - Reasoning shows up in `content` instead of `reasoning_content`: that is the non-streaming path. SSE clients get the split via `--reasoning-parser qwen3`.
 - Freeing disk: `mtplx models` for sizes, then remove the directory under `~/.mtplx/models`. Space does not return immediately -- hourly Time Machine local snapshots pin the deleted blocks for about a day. `tmutil listlocalsnapshots /` shows them.
+
+## License
+
+[PolyForm Strict 1.0.0](LICENSE), copyright hackers&wizards GmbH. The name hackers&wizards and its logos are not licensed.
