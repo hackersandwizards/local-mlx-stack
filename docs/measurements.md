@@ -32,7 +32,7 @@ The 3.6 measurement from 2026-08-14 put this gap at 5-10% (`sustained` 33.2/31.3
 
 `turbo` is on as of 2026-08-21, a deliberate trade: its 4-bit speculative-verify kernels are argmax- and sampler-distribution-validated but **not bit-exact against stock**, so this buys throughput with quality per token -- the opposite of the axis the 2026-08-14 migration chose. No measurement settles that; it is a judgement call, and it was made knowingly. Whether those kernels engage on the 8-bit pack is unverified; `turbo` against `sustained` is unmeasured on it.
 
-Its compiled verify engages up to **32,768** tokens of context and falls back to the eager path above that, so most agent sessions stay inside it. (This README said 12,288 until 2026-08-21; that was MTPLX 2.7.1. `mtplx status` prints the current fence.) `exact` sits on the other side of the same axis and is unmeasured here.
+Its compiled verify engages up to **32,768** tokens of context and falls back to the eager path above that, so most agent sessions stay inside it. `mtplx status` prints the current fence. `exact` sits on the other side of the same axis and is unmeasured here.
 
 Single runs rank nothing: absolute throughput moved by more than 50% across sessions on identical configs, driven by thermal state and how warm the session bank was. The numbers above are medians of ten across two alternating rounds -- see below for the method.
 
