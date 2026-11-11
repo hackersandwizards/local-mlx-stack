@@ -1,138 +1,75 @@
 # local-mlx-stack
 
-One OpenAI-compatible server on loopback: [MTPLX](https://github.com/youssofal/MTPLX) with native MTP speculative decoding, serving Qwen models on Apple Silicon. Two models share one port, a quality one and a fast one; `just serve <name>` replaces whatever is running there.
+One OpenAI-compatible server on loopback: [MTPLX](https://github.com/youssofal/MTPLX) with native MTP speculative decoding, serving Qwen models on Apple Silicon. Two models share one port, a quality one and a fast one; `just serve <name>` replaces whatever is running there. It is one person's local setup, published as it is, with every figure measured on an M3 Max with 64 GB.
+
+| You want | Go to |
+| --- | --- |
+| Run a local model | [Requirements and first run](#requirements-and-first-run) |
+| Point a client at it | [Endpoint](#endpoint) |
+| Know why these models and the `turbo` profile | [docs/measurements.md](docs/measurements.md) |
+| Change sampling or reasoning effort | [docs/configuration.md](docs/configuration.md) |
+| Fix an error | [docs/troubleshooting.md](docs/troubleshooting.md) |
+| Change this repository | [CLAUDE.md](CLAUDE.md) |
 
 ## Requirements and first run
 
-An Apple Silicon Mac with room for the model in unified memory: the default pack peaks at 32.7 GB, and our measurements below come from an M3 Max with 64 GB. You also need [`just`](https://github.com/casey/just), `jq`, and MTPLX with `llguidance`, installed by [mise](https://mise.jdx.dev) from this entry in `~/.config/mise/config.toml`:
+An Apple Silicon Mac with room for the model in unified memory: the default pack peaks at 32.7 GB. You also need [`just`](https://github.com/casey/just), `jq`, and MTPLX with `llguidance`, installed by [mise](https://mise.jdx.dev) from this entry in `~/.config/mise/config.toml`:
 
 ```toml
 "pypi:git+https://github.com/youssofal/MTPLX" = { version = "latest", with = ["llguidance"] }
 ```
 
+Then:
+
 ```bash
+git clone https://github.com/hackersandwizards/local-mlx-stack.git
+cd local-mlx-stack
 mise install
-just pull                # the default model, about 30 GB
-just pull qwen3.6-35b    # the fast model, 21 GB: just doctor checks both
-just doctor              # contract check per model
-just serve               # http://127.0.0.1:8001/v1, Ctrl-C to stop
+just pull
+just pull qwen3.6-35b
+just doctor
+just serve
 ```
+
+`just pull` fetches the default model (about 30 GB) and `just pull qwen3.6-35b` the fast one (21 GB). An interrupted pull resumes when you run it again. `just doctor` checks both models against the contract. `just serve` runs the server in the foreground at `http://127.0.0.1:8001/v1`; Ctrl-C stops it. When it works, `curl -s http://127.0.0.1:8001/v1/models` names the loaded model.
 
 ## Models
 
-| Name | Repo | Port | Disk | tok/s¹ | Notes |
-|---|---|---|---|---|---|
-| `qwen3.8-27b` *(default)* | `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality` | 8001 | 30.0 GB | 27-28 | Dense 27B, 8-bit g64 throughout, 16-bit GDN/norms/MTP head. 32.7 GB peak per the model card. Text + image + video + tools. |
-| `qwen3.6-35b` | `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` | 8001 | 21.0 GB | 94-100² | MoE, 35B with 3B active, 4-bit g64, MTP. The fast lane: about 3.6x the throughput of the model above, from the previous Qwen generation. |
+- `qwen3.8-27b`, the default: `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality`, dense 27B, 8-bit, 30.0 GB on disk, 27-28 tok/s. Text, image, video and tools.
+- `qwen3.6-35b`, the fast lane: `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed`, MoE with 3B active, 4-bit, 21.0 GB, 94-100 tok/s.
 
-¹ M3 Max 64 GB, 300-token decode under `turbo`, MTPLX 2.12.2, measured 2026-10-11 by alternating this pack with `Optimized-Speed` (4-bit, 21.3 GB) over four rounds, eight runs per server start, 60 s cooldown, foreign CPU 65-297% throughout. Medians of rounds 2-4: Quality 27.3 / 28.0 / 27.8, Speed 35.0 / 33.2 / 34.8 -- Quality costs about 20% throughput. Round 1 is excluded and not explained: on its first start after the download Quality ran at 12.7-16.1 and Speed at 25.0-31.3. Quality per token was not measured here; the model card gives 99.3% top-1 agreement with bf16 for Quality against 96.0% for Speed (KL 0.0005 against 0.012).
-
-² Same method, measured 2026-10-11 by alternating with `qwen3.8-27b` over three rounds of eight runs, foreign CPU 41-133%. Medians per round: `qwen3.6-35b` 98.3 / 94.2 / 100.4, `qwen3.8-27b` 26.4 / 26.9 / 27.6. No run of the 35B fell below 90.0. Its quality against the 27B is unmeasured here.
-
-The warmup ramp recorded on 2026-08-16 (18.6, 24.1, 28.6, 28.9, 31.8, 33.3, 32.4 over seven runs) did not appear on 2.12.2 in rounds 2-4: the first counted run after `bench.sh`'s one-token warmup was already at the plateau. Still read the first runs before taking a median.
-
-The other builds of the same checkpoint: `Optimized-Speed` (4-bit g32 mixed, 21.3 GB, the default here until 2026-10-11) and `Bare-Speed` (16 GB, unmeasured here).
+MTP speculative decoding is worth 2.03x here: `--mtp` against `--no-mtp`, same weights and loader. How these figures were measured: [docs/measurements.md](docs/measurements.md). `scripts/models.sh` holds the registry.
 
 ## Daily use
 
-```bash
-just serve [NAME]   # foreground, Ctrl-C to stop
-just bench [NAME]   # end-to-end tok/s against the model's port
-just pull [NAME]    # mtplx pull + symlink to the short served id
-just status         # mtplx status
-just models         # mtplx models
-just stop           # stops the MTPLX daemon on the port
-just doctor         # contract check per model, then mtplx status
-```
+- `just serve [NAME]`: serve a model in the foreground, Ctrl-C to stop.
+- `just bench [NAME]`: end-to-end tok/s against the model's port.
+- `just pull [NAME]`: `mtplx pull` plus a symlink to the short served id.
+- `just status`, `just models`: MTPLX's own status and model list.
+- `just stop`: stop the MTPLX daemon on the port.
+- `just doctor`: contract check per model, then `mtplx status`.
 
-## What this repo owns
+MTPLX owns the model cache, downloads, health and client wiring; call `mtplx` directly for those ([docs/configuration.md](docs/configuration.md)).
 
-MTPLX owns the model cache, downloads, health, and client wiring. Calling it directly is usually the right move:
-
-| Task | Command |
-|---|---|
-| Download a model | `mtplx pull <hf-repo>` |
-| List the cache | `mtplx models` |
-| Compatibility check | `mtplx inspect <path>` |
-| Wire up a client | `mtplx connect opencode` (also Claude Code, Open WebUI, Swival) |
-| Stop a daemon | `mtplx stop --port <p>` |
-| Find the fastest draft depth | `mtplx tune` |
-
-What is left here is what MTPLX does not persist: the per-model sampling preset, the exact serve invocation, and a benchmark that reports decode throughput rather than draft depth. `scripts/models.sh` holds the whole registry.
-
-## Sampling
-
-Qwen publishes a different preset per release, so it belongs next to the model and lives in `scripts/models.sh`. MTPLX persists none of it: `mtplx settings set` only reaches a running daemon, and `~/.mtplx/config.toml` covers the default model and profile, not sampling.
-
-- `qwen3.8-27b`: `temp 1.0`, `top_p 0.95`, `top_k 20` -- the official sampler from the MTPLX 2.7.0 release notes.
-- `qwen3.6-35b`: `temp 0.6`, `top_p 0.95`, `top_k 20` -- the `sampler` in the pack's own `mtplx_runtime.json`.
-
-The preset does not pin `presence_penalty`; MTPLX has `--default-presence-penalty` but the thinking preset sets it to 0 anyway. Clients override per request.
-
-`REASONING_EFFORT` sits in the same registry entry. The model card defaults to `xhigh`, which is expensive on a dense 27B; MTPLX's own coding default is `medium`, so the registry pins that and `serve.sh` passes it on. Measured per request on 2026-08-16, same prompt: `low` 1891, `medium` 2439, `xhigh` 3801 completion tokens. Clients override per request via `reasoning_effort`.
-
-## Profile
-
-`PROFILE` in `scripts/models.sh`, currently `turbo`, shared by both models. Until 2026-08-14 this was `performance-cold`, which MTPLX itself describes as "not recommended for long context"; from then until 2026-08-21 it was `sustained`.
-
-Measured on the 3.8 `Optimized-Speed` pack on 2026-08-21 as part of the stack comparison below -- same run, same alternation, 300-token decode, median of ten:
-
-| Profile | tok/s | vs `sustained` |
-|---|---|---|
-| `sustained` | 27.73 | -- |
-| `turbo` | 33.02 | **+19%** |
-
-The 3.6 measurement from 2026-08-14 put this gap at 5-10% (`sustained` 33.2/31.3, `turbo` 35.3/34.3 across a short and a long lane). On the 3.8 it is roughly twice that, so the profile matters more here than the old number suggested.
-
-`turbo` is on as of 2026-08-21, a deliberate trade: its 4-bit speculative-verify kernels are argmax- and sampler-distribution-validated but **not bit-exact against stock**, so this buys throughput with quality per token -- the opposite of the axis the 2026-08-14 migration chose. No measurement settles that; it is a judgement call, and it was made knowingly. Whether those kernels engage on the 8-bit pack is unverified; `turbo` against `sustained` is unmeasured on it.
-
-Its compiled verify engages up to **32,768** tokens of context and falls back to the eager path above that, so most agent sessions stay inside it. (This README said 12,288 until 2026-08-21; that was MTPLX 2.7.1. `mtplx status` prints the current fence.) `exact` sits on the other side of the same axis and is unmeasured here.
-
-Single runs rank nothing: absolute throughput moved by more than 50% across sessions on identical configs, driven by thermal state and how warm the session bank was. The numbers above are medians of ten across two alternating rounds -- see below for the method.
-
-## Stack comparison
-
-Is MLX or MTPLX the faster way to run this model here? Measured 2026-08-21 on the `Optimized-Speed` pack, M3 Max 64 GB on AC power. Five configurations alternating over two rounds; per server start five warmup runs discarded and five counted; 300-token decode, 60 s cooldown. Sampling forced identical everywhere (`1.0 / 0.95 / 20`) -- `mlx_lm.server` defaults to `0.0 / 1.0 / 0` and would otherwise measure something else entirely. Session bank cleared beforehand, since `mlx_lm` has no equivalent and a warm one flatters MTPLX.
-
-| Stack | Model | Size | tok/s | vs AR baseline |
-|---|---|---|---|---|
-| MTPLX, `turbo`, MTP | own build, 4-bit g32 mixed | 21.3 GB | **33.02** | 2.03x |
-| MTPLX, `sustained`, MTP | own build, 4-bit g32 mixed | 21.3 GB | 27.73 | 1.70x |
-| `mlx_lm` | orca abliterated, 4-bit g64 | 15 GB | 20.65 | 1.27x |
-| MTPLX, `turbo`, **no MTP** | own build, 4-bit g32 mixed | 21.3 GB | 16.27 | 1.00x |
-| `mlx_lm` | orca abliterated, 6-bit g64 | 21 GB | 13.38 | 0.82x |
-
-Three separate conclusions, and only the first is causal:
-
-1. **MTP speculative decoding is worth 2.03x.** Same loader, same weights, same profile -- `--mtp` against `--no-mtp` is the only controlled comparison here, because it changes exactly one variable. This is the number that justifies the whole backend choice. For reference, PocketAiHub measured 2.35x for the same recipe on an M5 Max.
-2. **MTPLX beats `mlx_lm` by 2.47x at equal size**, 33.02 against 13.38 for the 21 GB pair. But that comparison changes backend, quantization layout *and* MTP at once, so it ranks stacks, not backends. `mlx_lm` has no MTP path for Qwen3.8 at all (see "Why MTPLX" in `CLAUDE.md`), so this is the honest practical question -- just not a clean experiment.
-3. **Quantization size dominates on a memory-bound machine.** orca 4-bit (15 GB) runs 1.54x the 6-bit (21 GB) build of the same weights. Bandwidth, not arithmetic, is the constraint.
-
-Caveats worth carrying: macOS background jobs (`mediaanalysisd`, Spotlight) claimed 69-161% of a core across the run and would not stay quiet. Their cost is bounded, though -- configuration A ran once at 7% foreign CPU and once at 132% and lost 4.8% between them, against gaps of 60-147% being measured. Round 1 and round 2 agree within ~5% for every configuration, which is why these medians are usable at all.
-
-`mlx_lm` shows no warmup ramp: five consecutive runs sat within 1 tok/s of each other from cold. The 18.6 to 33.3 climb recorded under Models is MTPLX-specific, not thermal.
-
-## Endpoints
+## Endpoint
 
 ```
 http://127.0.0.1:8001/v1  -> qwen3.8-27b | qwen3.6-35b
 ```
 
-One endpoint, one model at a time. Both ids are registered in every client, so switching means `just serve <name>` plus picking the other id in the client.
+One endpoint, one model at a time. Register both ids in your client: `mtplx connect <client>` prints the settings for opencode, Claude Code, Open WebUI and Swival. Switching then means `just serve <name>` plus picking the other id in the client.
 
 **MTPLX does not check the requested id.** It answers from whatever is loaded, no error and no warning. The response's own `model` field and `curl -s http://127.0.0.1:8001/v1/models` name the loaded weights -- check there, not in the client's dropdown.
 
-Clients are configured in `~/.config/zed/settings.json`, `~/.pi/agent/models.json`, and `~/.config/opencode/opencode.json`. `mtplx connect <client>` prints the settings for the ones it knows.
+## Documentation
 
-## Troubleshooting
+- [Measurements](docs/measurements.md): throughput per model, the `turbo` profile against `sustained`, MTPLX against `mlx_lm`.
+- [Configuration](docs/configuration.md): what MTPLX owns, the sampling presets and reasoning effort, the client config files.
+- [Troubleshooting](docs/troubleshooting.md): the error messages of the scripts and of MTPLX, and freeing disk.
 
-- `:8001 held by something MTPLX cannot stop`: `serve.sh` already tried to replace the holder and waited 30 s, so this is not another MTPLX daemon. The message prints the `lsof` output naming the process.
-- `mtplx missing`: it is declared in `~/.config/mise/config.toml` as `"pypi:git+https://github.com/youssofal/MTPLX" = { version = "latest", with = ["llguidance"] }`; run `mise install`.
-- Model not pulled: `just pull <name>`. A placeholder repo without weight shards fails there, not at serve time.
-- `pull failed: [Errno 54] Connection reset by peer`: transient, not a blocked network. Rerun `just pull` -- it resumes from the `.incomplete` shard rather than restarting.
-- `response_format: json_schema` returns `requires the optional llguidance dependency`: MTPLX's `server` extra comes without `llguidance`. It fails closed rather than returning unconstrained output. The mise entry carries `with = ["llguidance"]`; if that is missing, add it and run `mise install`. `just doctor` checks it.
-- Reasoning shows up in `content` instead of `reasoning_content`: that is the non-streaming path. SSE clients get the split via `--reasoning-parser qwen3`.
-- Freeing disk: `mtplx models` for sizes, then remove the directory under `~/.mtplx/models`. Space does not return immediately -- hourly Time Machine local snapshots pin the deleted blocks for about a day. `tmutil listlocalsnapshots /` shows them.
+## Work on it
+
+The scripts live in `scripts/`, the recipes in the `justfile`. `just doctor` is the check after a change: there is no test suite and no release. Rules and the reasoning behind the setup: [CLAUDE.md](CLAUDE.md).
 
 ## License
 

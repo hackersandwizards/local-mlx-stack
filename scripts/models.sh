@@ -7,7 +7,7 @@ MODELS_DIR="${MTPLX_MODEL_DIR:-$HOME/.mtplx/models}"
 # serve.sh replaces whatever holds the port rather than starting a second daemon.
 PORT=8001
 
-# Faster than sustained; see README for the measurement and the tradeoff.
+# Faster than sustained; see docs/measurements.md for the measurement and the tradeoff.
 PROFILE=turbo
 
 # Every served id. doctor.sh and the justfile iterate this rather than
