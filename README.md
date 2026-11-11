@@ -13,10 +13,12 @@ One OpenAI-compatible server on loopback: [MTPLX](https://github.com/youssofal/M
 
 ## Requirements and first run
 
-An Apple Silicon Mac with room for the model in unified memory: the default pack peaks at 32.7 GB. You also need [`just`](https://github.com/casey/just), `jq`, and MTPLX with `llguidance`, installed by [mise](https://mise.jdx.dev) from this entry in `~/.config/mise/config.toml`:
+An Apple Silicon Mac with room for the model in unified memory: the default pack peaks at 32.7 GB. You also need [`just`](https://github.com/casey/just), `jq`, and MTPLX with `llguidance`, installed by [mise](https://mise.jdx.dev) from this table in `~/.config/mise/config.toml`:
 
 ```toml
-"pypi:git+https://github.com/youssofal/MTPLX" = { version = "latest", with = ["llguidance"] }
+[tools."pypi:git+https://github.com/youssofal/MTPLX"]
+version = "latest"
+with = ["llguidance"]
 ```
 
 Then:
