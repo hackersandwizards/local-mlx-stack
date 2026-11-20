@@ -1,26 +1,22 @@
-DEFAULT_MODEL := "qwen3.8-27b"
+# The one model, and the port every client config points at.
+export MODEL := "inkling-2-mini"
+export PORT := "8001"
+export OLLAMA_HOST := "127.0.0.1:" + PORT
 
 default:
     @just status
 
-serve NAME=DEFAULT_MODEL:
-    scripts/serve.sh {{NAME}}
+serve:
+    ollama serve
 
-bench NAME=DEFAULT_MODEL:
-    scripts/bench.sh {{NAME}}
+pull:
+    ollama pull {{MODEL}}
 
-pull NAME=DEFAULT_MODEL:
-    scripts/pull.sh {{NAME}}
-
-doctor:
-    @scripts/doctor.sh
-
-models:
-    @mtplx models
+bench:
+    scripts/bench.sh
 
 status:
-    @mtplx status
+    @ollama ps
 
 stop:
-    @. scripts/models.sh && \
-      { mtplx stop --port $PORT --json > /dev/null 2>&1 && echo "✓ :$PORT stopped" || echo "(nothing on :$PORT)"; }
+    ollama stop {{MODEL}}

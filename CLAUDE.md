@@ -1,50 +1,37 @@
 # CLAUDE.md
 
-Local MLX inference on this MacBook Pro (M3 Max, 64 GB unified memory, ~400 GB/s). Path: `/Users/bstemmildt/dev/hackersandwizards/internal/local-mlx-stack`. Single backend, OpenAI-compatible.
+Local MLX inference on this MacBook Pro (M3 Max, 64 GB unified memory, ~400 GB/s). Path: `/Users/bstemmildt/dev/hackersandwizards/internal/local-mlx-stack`. Single backend, single model, OpenAI-compatible.
 
-## Models
+## Model
 
-Serving is **exclusive**: one port, one model at a time. **MTPLX ignores the requested `model` id** and answers from whatever is loaded. The response's `model` field and `/v1/models` report the truth; verify there before trusting which weights answered. `serve.sh` replaces whatever holds `:8001` instead of refusing to start, so every client config stays valid across a model switch.
-
-- **`qwen3.8-27b`** — `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality` (dense 27B, 8-bit g64, 16-bit GDN/norms/MTP head, 30.0 GB). Text + image + video + tools, 27-28 tok/s under `turbo`. Chosen 2026-10-11 over `Optimized-Speed` (4-bit, 33-35 tok/s in the same alternating run) for fidelity: 99.3% against 96.0% top-1 agreement with bf16 per the model card, not measured here. `docs/measurements.md` has the run.
-- **`qwen3.6-35b`** — `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed` (MoE, 3B active, 4-bit g64, 21.0 GB). The fast lane: 94-100 tok/s under `turbo`, measured 2026-10-11 by alternating with the model above. Previous Qwen generation; its quality against the 27B is unmeasured here.
+**`inkling-2-mini`** -- `thinkingmachines/Inkling-2-Mini` from Ollama's library (tag `26b-a5b-nvfp4`, MoE, 26.4B with 3.4B active, middle 12 layers looped three times, NVFP4 and MXFP8 as released, 19 GB on disk, 22 GB loaded). Text, image and tools. Ollama rejects any other requested id with `not found`.
 
 ## Serving
 
-- `scripts/models.sh` is the registry: served id -> repo and sampling, plus `PORT` and `PROFILE`. The justfile sources the registry rather than repeating the port.
-- `scripts/serve.sh` runs `mtplx quickstart` with that preset. Justfile: `serve | bench | pull | status | models | stop | doctor`.
-- MTPLX's model cache is `~/.mtplx/models`; `mtplx pull` writes `Org--Repo` there and `pull.sh` symlinks the short served id onto it.
-- The verified-native tier needs `mtp.safetensors` + `mtplx_runtime.json` co-located with the model. Running process pattern is `mtplx.server.openai`.
+- The `justfile` holds the model and the port and exports `OLLAMA_HOST=127.0.0.1:8001`. Recipes: `serve | pull | bench | status | stop`.
+- `just serve` is `ollama serve` in the foreground. Ollama loads the model on the first request and unloads it after five idle minutes.
+- The model store is `~/.ollama/models`.
+- Ollama is installed by mise from `~/.config/mise/config.toml`, pinned to `0.40.17-rc3`: the model requires 0.40.17, and mise installs a release candidate only by exact version. Change the pin to `latest` once 0.40.17 is stable.
 
-## Why this shape (2026-08-14 single-backend migration)
+## Why this shape (2026-11-20, Inkling only)
 
-- Dropped oMLX and `qwen3.6-35b` (MoE A3B, ~92 tok/s) on the user's call: quality per token over bulk throughput. The cost is real and not recoverable here — MTPLX rejected `qwen3_5_moe` then. By 2.12.2 it serves that MoE with MTP, and `qwen3.6-35b` came back on 2026-10-11 as the fast lane.
-- With one backend the repo stopped needing a backend dispatch, two symlink dirs, per-model env files, and a Python layer for `hf download`. MTPLX covers pull, models, status, stop, inspect, and client wiring natively; what remains here is the sampling preset, the serve invocation, and a tok/s bench.
-- Qwen3.8 has no sibling that fits 64 GB: the MoE is 2.4T-A95B, and Flash-Next (125B, 6B active) peaks at 87 GiB in its 4-bit MTPLX pack, 78 GiB in Bare Speed. Flash-Next beats the 27B on the vendor's coding benchmarks, so it is the upgrade if this machine is ever replaced by one with 96 GB or more. Qwen 4 27B was announced 2026-09-22 with no weights as of 2026-10-11.
-
-## Why MTPLX (checked 2026-08-16)
-
-Not preference — lack of competition. On Metal, llama.cpp's MTP is a net loss at every setting ([#23752](https://github.com/ggml-org/llama.cpp/issues/23752): -11% to -24%; the per-step Metal kernel launch costs more than the speculation saves). mlx-lm's native MTP is [PR #990](https://github.com/ml-explore/mlx-lm/pull/990), open since March 2026, Qwen3.5/3.6 only. mlx-vlm can use `mlx-community/Qwen3.8-27B-MTP-4bit` as a draft model from the CLI, but its server has no speculative-decoding support ([#981](https://github.com/Blaizzy/mlx-vlm/issues/981), closed without a branch). MTPLX is therefore the only way to get MTP behind an OpenAI-compatible endpoint here. Re-check if PR #990 merges and picks up 3.8.
+- Replaced MTPLX and two Qwen packs (`qwen3.8-27b`, 27-28 tok/s; `qwen3.6-35b`, 94-100 tok/s) on the user's call: one model, chosen on the vendor's benchmarks against Qwen3.8-27B and on its footprint. Throughput was assumed, not measured: `docs/measurements.md` has two quiet runs at 25.4 and 28.0 tok/s and fourteen disturbed ones.
+- What was given up: the fast lane, video input, and a stable backend release.
+- Ollama's MLX runner was on that day the only Mac runtime that loaded this model with its draft model (the `mtp.safetensors` DSpark drafter). MTPLX had no loader for it, oMLX had Inkling 2 Small only, and mlx-lm's Inkling 2 pull request ([#2061](https://github.com/ml-explore/mlx-lm/pull/2061)) had no code for the looped layers.
+- With one model and Ollama owning pull, store, template and sampling, the registry, the serve and pull scripts and the doctor went. What remains is the port, the model name and a tok/s bench.
 
 ## Clients
 
-- **Zed** `~/.config/zed/settings.json` → `language_models.openai_compatible`. Validator needs the full `capabilities` block per model.
-- **pi** `~/.pi/agent/models.json` → `compat.thinkingFormat: "qwen"` enables client-side reasoning parse.
+- **Zed** `~/.config/zed/settings.json` -> `language_models.openai_compatible`. Validator needs the full `capabilities` block per model.
+- **pi** `~/.pi/agent/models.json` -> `compat.thinkingFormat: "openai"`.
 - **opencode** `~/.config/opencode/opencode.json`.
-- `mtplx connect <client>` prints settings for opencode, Claude Code, Open WebUI, and Swival.
+- `ollama launch <client> --model inkling-2-mini` wires the clients Ollama knows.
 
 ## Conventions
 
-- Before recommending model changes, read `scripts/models.sh` for what is registered and `mtplx models` for what is on disk.
-- New models: confirm `mtplx inspect <path>` returns `tier: verified` + `runtime_compatibility: native` before wiring (it refuses otherwise without `--unsafe-force-unverified`). `just doctor` checks this.
-- Benchmarks: `just bench <name>`. Throughput swings several tok/s with thermal state, so a single run ranks nothing — alternate the configs under test and give the machine a cooldown between them. There was a warmup ramp of about five runs after a server start (measured 2026-08-16: 18.6 climbing to 33.3 tok/s over seven runs); on 2.12.2 it did not appear on 2026-10-11, but a pack's first start after download ran at half speed for all eight runs, unexplained. Discard the ramp before taking a median, or you will report a third less than the real number. The ramp is **MTPLX-specific**: `mlx_lm` was flat within 1 tok/s from cold on 2026-08-21, so it is warmup, not thermal.
-- **Check what macOS is doing before benchmarking.** `mediaanalysisd`, `spotlightknowledged` and Spotlight importers wake up precisely when the Mac is on AC and looks idle, and they compete for the memory bandwidth this workload is bound by. A run on 2026-08-21 had to be discarded because a config collapsed from 20.4 to 10.6 tok/s mid-sequence. `uptime` plus `ps -Ao %cpu,comm -r | head` before starting; `touch <dir>/.metadata_never_index` in the model directories stops Spotlight re-indexing 20 GB of weights after every pull. Log foreign CPU per run rather than trusting a quiet start — the cost is bounded (~5% at 130% foreign CPU) but only measurable if recorded.
-- MTP is worth **2.03x** here (`--mtp` vs `--no-mtp`, same weights and loader, 2026-08-21). That is the number the whole backend choice rests on; re-measure it rather than the stack-vs-stack comparison if MTPLX is ever questioned.
-- Backend CLI flags drift between releases and the scripts fail closed on unknown ones. Check `mtplx quickstart --help` against `serve.sh` after a `mise upgrade`, and match process names against `pgrep -fl` rather than the command you typed. Read the installed `--help` before writing anything here about what a flag accepts; this file carried a wrong claim about `--reasoning-effort` for two days because it was written from a release note instead.
-- Reasoning split: MTPLX splits `reasoning_content` server-side in streaming only; non-streaming puts thinking into `content`. SSE clients use `--reasoning-parser qwen3`.
-- `reasoning_effort` lives in `scripts/models.sh` (`medium`), not in the client configs. MTPLX accepts `auto|low|medium|high|xhigh` on the flag and per request; cost measured on **2.7.1**, same prompt: `low` 1891, `medium` 2439, `xhigh` 3801 completion tokens. Not re-measured against 2.9.0.
-- `--preserve-thinking auto` resolves differently per model: `scoped` for 3.6, **preserve-all** for 3.8, because that is its trained contract. Agent loops accumulate context faster on 3.8 as a result.
-- MTPLX is installed by mise from `~/.config/mise/config.toml` (`pypi:git+https://github.com/youssofal/MTPLX`, `with = ["llguidance"]`). `response_format: json_schema` needs `llguidance`, which MTPLX's `server` extra omits, and fails closed without it. The `with` entry reinstalls it on every upgrade; `just doctor` checks it.
-- The SSD session bank (`~/.mtplx/session-bank`) is on by default and budgeted at `min(cap, free_disk/4)` with the cap defaulting to `100GB` — effectively unbounded here. `serve.sh` pins `--ssd-session-cache-max-size 20GB`. It had grown to 5.3 GB in five days.
-- Downloads: `HF_HUB_DISABLE_XET=1` is worth setting. Measured 2026-08-21 pulling 36 GB: Xet on 702 MB/min, Xet on with `HF_XET_HIGH_PERFORMANCE=1` **387**, Xet off **2003**. Xet's chunk dedup buys nothing on a first-time model pull and costs a third of a core. `mtplx pull` runs its own downloader and stayed at ~320 MB/min regardless on 2.7.x; on 2.12.2 it pulled 29.4 GB in under seven minutes (2026-10-11).
-- **Verify before dismissing model names.** When the user names a model/version not in training data (cutoff Jan 2026; the clock may be months ahead), run one `WebSearch` before pushing back — confidently-wrong is worse than uncertain. (e.g. Qwen3.8-27B released 2026-08-14, post-cutoff.)
+- Before recommending a model change, read the `justfile` for what is served and `ollama list` for what is on disk.
+- Benchmarks: `just bench`. Throughput swings with thermal state and foreign load, so a single run ranks nothing -- alternate the configurations under test, cool down 60 s between them, and log foreign CPU per run. On 2026-11-20 a second workload cut this model from 25-28 to 9-12 tok/s.
+- **Check what macOS is doing before benchmarking.** `mediaanalysisd`, `spotlightknowledged` and Spotlight importers wake up precisely when the Mac is on AC and looks idle, and they compete for the memory bandwidth this workload is bound by. `uptime` plus `ps -Ao %cpu,comm -r | head` before starting.
+- Read the installed `ollama serve --help` and `ollama show` before writing anything here about what a setting accepts, never a release note.
+- Thinking arrives as `reasoning`, not `reasoning_content`. `reasoning_effort: "none"` on `/v1` returned empty answers on 0.40.17-rc3, not explained; re-test after an upgrade.
+- **Verify before dismissing model names.** When the user names a model/version not in training data (the clock may be months ahead), run one `WebSearch` before pushing back -- confidently-wrong is worse than uncertain.

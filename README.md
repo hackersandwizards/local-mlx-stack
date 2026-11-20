@@ -1,25 +1,26 @@
 # local-mlx-stack
 
-One OpenAI-compatible server on loopback: [MTPLX](https://github.com/youssofal/MTPLX) with native MTP speculative decoding, serving Qwen models on Apple Silicon. Two models share one port, a quality one and a fast one; `just serve <name>` replaces whatever is running there. It is one person's local setup, published as it is, with every figure measured on an M3 Max with 64 GB.
+One OpenAI-compatible server on loopback: [Ollama](https://ollama.com) with its MLX runner, serving [Inkling 2 Mini](https://huggingface.co/thinkingmachines/Inkling-2-Mini) on Apple Silicon, with the model's own draft model for speculative decoding. It is one person's local setup, published as it is, with every figure measured on an M3 Max with 64 GB.
 
 | You want | Go to |
 | --- | --- |
 | Run a local model | [Requirements and first run](#requirements-and-first-run) |
 | Point a client at it | [Endpoint](#endpoint) |
-| Know why these models and the `turbo` profile | [docs/measurements.md](docs/measurements.md) |
-| Change sampling or reasoning effort | [docs/configuration.md](docs/configuration.md) |
+| Know what was measured, and what was not | [docs/measurements.md](docs/measurements.md) |
+| Change thinking, context or memory use | [docs/configuration.md](docs/configuration.md) |
 | Fix an error | [docs/troubleshooting.md](docs/troubleshooting.md) |
 | Change this repository | [CLAUDE.md](CLAUDE.md) |
 
 ## Requirements and first run
 
-An Apple Silicon Mac with room for the model in unified memory: the default pack peaks at 32.7 GB. You also need [`just`](https://github.com/casey/just), `jq`, and MTPLX with `llguidance`, installed by [mise](https://mise.jdx.dev) from this table in `~/.config/mise/config.toml`:
+An Apple Silicon Mac with 32 GB of memory or more: the model holds 22 GB once loaded. You also need [`just`](https://github.com/casey/just), `jq`, and Ollama 0.40.17 or newer, installed by [mise](https://mise.jdx.dev) from this entry in `~/.config/mise/config.toml`:
 
 ```toml
-[tools."pypi:git+https://github.com/youssofal/MTPLX"]
-version = "latest"
-with = ["llguidance"]
+[tools]
+ollama = "0.40.17-rc3"
 ```
+
+On 2026-11-20 the release that runs this model is a release candidate, which mise installs only when the entry names it exactly. Once 0.40.17 is stable, `"latest"` does.
 
 Then:
 
@@ -27,51 +28,44 @@ Then:
 git clone https://github.com/hackersandwizards/local-mlx-stack.git
 cd local-mlx-stack
 mise install
-just pull
-just pull qwen3.6-35b
-just doctor
 just serve
 ```
 
-`just pull` fetches the default model (about 30 GB) and `just pull qwen3.6-35b` the fast one (21 GB). An interrupted pull resumes when you run it again. `just doctor` checks both models against the contract. `just serve` runs the server in the foreground at `http://127.0.0.1:8001/v1`; Ctrl-C stops it. When it works, `curl -s http://127.0.0.1:8001/v1/models` names the loaded model.
+`just serve` runs the server in the foreground at `http://127.0.0.1:8001/v1`; Ctrl-C stops it. In a second terminal, `just pull` fetches the model (19 GB) through the running server. When it works, `curl -s http://127.0.0.1:8001/v1/models` names `inkling-2-mini:latest`.
 
-## Models
+## Model
 
-- `qwen3.8-27b`, the default: `Youssofal/Qwen3.8-27B-MTPLX-Optimized-Quality`, dense 27B, 8-bit, 30.0 GB on disk, 27-28 tok/s. Text, image, video and tools.
-- `qwen3.6-35b`, the fast lane: `Youssofal/Qwen3.6-35B-A3B-MTPLX-Optimized-Speed`, MoE with 3B active, 4-bit, 21.0 GB, 94-100 tok/s.
+`inkling-2-mini`: Thinking Machines' Inkling 2 Mini, a mixture-of-experts model with 26.4B parameters, of which 3.4B are active per token. Its middle 12 layers run three times, which the vendor counts as 5.4B effective. Ollama loads the checkpoint as released, in NVFP4 and MXFP8, so nothing is quantized here. It takes text, images and tools, and thinks before it answers.
 
-MTP speculative decoding is worth 2.03x here: `--mtp` against `--no-mtp`, same weights and loader. How these figures were measured: [docs/measurements.md](docs/measurements.md). `scripts/models.sh` holds the registry.
+It was chosen on 2026-11-20 on the vendor's benchmarks and replaced two Qwen packs served by MTPLX. Its throughput against them is not settled: [docs/measurements.md](docs/measurements.md) has the runs.
 
 ## Daily use
 
-- `just serve [NAME]`: serve a model in the foreground, Ctrl-C to stop.
-- `just bench [NAME]`: end-to-end tok/s against the model's port.
-- `just pull [NAME]`: `mtplx pull` plus a symlink to the short served id.
-- `just status`, `just models`: MTPLX's own status and model list.
-- `just stop`: stop the MTPLX daemon on the port.
-- `just doctor`: contract check per model, then `mtplx status`.
+- `just serve`: serve in the foreground, Ctrl-C to stop.
+- `just pull`: fetch or update the model; needs the server running.
+- `just bench`: end-to-end tok/s for one 300-token answer.
+- `just status`: what is loaded, how much memory it holds, and until when.
+- `just stop`: unload the model and free its memory; the server keeps running.
 
-MTPLX owns the model cache, downloads, health and client wiring; call `mtplx` directly for those ([docs/configuration.md](docs/configuration.md)).
+Ollama loads the model on the first request and unloads it after five idle minutes. It owns the model store (`~/.ollama/models`), downloads and client wiring; call `ollama` directly for those, with `OLLAMA_HOST=127.0.0.1:8001` set.
 
 ## Endpoint
 
 ```
-http://127.0.0.1:8001/v1  -> qwen3.8-27b | qwen3.6-35b
+http://127.0.0.1:8001/v1  -> inkling-2-mini
 ```
 
-One endpoint, one model at a time. Register both ids in your client: `mtplx connect <client>` prints the settings for opencode, Claude Code, Open WebUI and Swival. Switching then means `just serve <name>` plus picking the other id in the client.
-
-**MTPLX does not check the requested id.** It answers from whatever is loaded, no error and no warning. The response's own `model` field and `curl -s http://127.0.0.1:8001/v1/models` name the loaded weights -- check there, not in the client's dropdown.
+A request for any other model id is answered with `model '<id>' not found`. Thinking arrives in the `reasoning` field of a message or stream delta, not in `reasoning_content`.
 
 ## Documentation
 
-- [Measurements](docs/measurements.md): throughput per model, the `turbo` profile against `sustained`, MTPLX against `mlx_lm`.
-- [Configuration](docs/configuration.md): what MTPLX owns, the sampling presets and reasoning effort, the client config files.
-- [Troubleshooting](docs/troubleshooting.md): the error messages of the scripts and of MTPLX, and freeing disk.
+- [Measurements](docs/measurements.md): disk, memory and the throughput runs of 2026-11-20, with what disturbed them.
+- [Configuration](docs/configuration.md): what Ollama owns, thinking levels, context length, the client config files.
+- [Troubleshooting](docs/troubleshooting.md): the errors met so far, and freeing disk.
 
 ## Work on it
 
-The scripts live in `scripts/`, the recipes in the `justfile`. `just doctor` is the check after a change: there is no test suite and no release. Rules and the reasoning behind the setup: [CLAUDE.md](CLAUDE.md).
+The recipes live in the `justfile`, the benchmark in `scripts/bench.sh`. `just serve` plus one request is the check after a change: there is no test suite and no release. Rules and the reasoning behind the setup: [CLAUDE.md](CLAUDE.md).
 
 ## License
 

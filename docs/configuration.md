@@ -1,33 +1,33 @@
 # Configuration
 
-What this repository sets for MTPLX, and what it leaves to MTPLX. The registry is `scripts/models.sh`.
+What this repository sets for Ollama, and what it leaves to Ollama.
 
 ## What this repo owns
 
-MTPLX owns the model cache, downloads, health, and client wiring. Calling it directly is usually the right move:
+Two values, both in the `justfile`: the model (`inkling-2-mini`) and the address (`127.0.0.1:8001`, passed as `OLLAMA_HOST`). The port is not Ollama's default 11434 because the client configs point at 8001.
+
+Ollama owns the rest. With `OLLAMA_HOST=127.0.0.1:8001` set:
 
 | Task | Command |
 |---|---|
-| Download a model | `mtplx pull <hf-repo>` |
-| List the cache | `mtplx models` |
-| Compatibility check | `mtplx inspect <path>` |
-| Wire up a client | `mtplx connect opencode` (also Claude Code, Open WebUI, Swival) |
-| Stop a daemon | `mtplx stop --port <p>` |
-| Find the fastest draft depth | `mtplx tune` |
+| Download or update the model | `ollama pull inkling-2-mini` |
+| List the store | `ollama list` |
+| Template, capabilities, required version | `ollama show inkling-2-mini` |
+| What is loaded | `ollama ps` |
+| Wire up a client | `ollama launch <client> --model inkling-2-mini` |
 
-What is left here is what MTPLX does not persist: the per-model sampling preset, the exact serve invocation, and a benchmark that reports decode throughput rather than draft depth. `scripts/models.sh` holds the whole registry.
+The model ships its own chat template and sampling, so no preset lives here.
 
-## Sampling
+## Thinking
 
-Qwen publishes a different preset per release, so it belongs next to the model and lives in `scripts/models.sh`. MTPLX persists none of it: `mtplx settings set` only reaches a running daemon, and `~/.mtplx/config.toml` covers the default model and profile, not sampling.
+The model thinks at `high` unless a request says otherwise. `ollama show` lists the levels: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Clients set one per request with `reasoning_effort`.
 
-- `qwen3.8-27b`: `temp 1.0`, `top_p 0.95`, `top_k 20` -- the official sampler from the MTPLX 2.7.0 release notes.
-- `qwen3.6-35b`: `temp 0.6`, `top_p 0.95`, `top_k 20` -- the `sampler` in the pack's own `mtplx_runtime.json`.
+On 0.40.17-rc3, `reasoning_effort: "none"` on `/v1/chat/completions` returned an empty answer that still used every allowed token; it is not explained. `"think": false` on Ollama's own `/api/chat` answered without thinking. An unknown level is accepted without an error.
 
-The preset does not pin `presence_penalty`; MTPLX has `--default-presence-penalty` but the thinking preset sets it to 0 anyway. Clients override per request.
+## Context and memory
 
-`REASONING_EFFORT` sits in the same registry entry. The model card defaults to `xhigh`, which is expensive on a dense 27B; MTPLX's own coding default is `medium`, so the registry pins that and `serve.sh` passes it on. Measured per request on 2026-08-16, same prompt: `low` 1891, `medium` 2439, `xhigh` 3801 completion tokens. Clients override per request via `reasoning_effort`.
+Ollama picked a context of 262,144 tokens on this machine, at 22 GB loaded. `OLLAMA_CONTEXT_LENGTH` sets another; how much memory a smaller one saves is not measured here. `OLLAMA_KEEP_ALIVE` sets how long an idle model stays loaded (default five minutes); `just stop` unloads it at once.
 
 ## Clients
 
-Clients are configured in `~/.config/zed/settings.json`, `~/.pi/agent/models.json`, and `~/.config/opencode/opencode.json`. `mtplx connect <client>` prints the settings for the ones it knows.
+Clients are configured in `~/.config/zed/settings.json`, `~/.pi/agent/models.json`, and `~/.config/opencode/opencode.json`. pi takes `compat.thinkingFormat: "openai"`, which sends `reasoning_effort`.
