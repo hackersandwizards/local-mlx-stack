@@ -38,8 +38,7 @@ The persistent SSD SessionBank cache (`~/.mtplx/session-bank`) is on by default 
 
 ## Clients
 
-All three clients point at provider `local-mlx` (`http://127.0.0.1:8001/v1`, model `inkling-2-mini`):
+Both clients point at provider `local-mlx` (`http://127.0.0.1:8001/v1`, model `inkling-2-mini`):
 
 - **Zed:** `~/.config/zed/settings.json` (`max_tokens: 716800`, tools, images, parallel tool calls, interleaved reasoning).
 - **pi:** `~/.pi/agent/models.json` (`compat.thinkingFormat: "qwen"`, `headers["x-mtplx-client"]: "pi"`, `thinkingLevelMap` for `minimal`/`xhigh`/`max`) plus `~/.pi/agent/extensions/mtplx-session-headers.ts` to forward `x-mtplx-session-id` for SSD SessionBank reuse across restarts.
-- **opencode:** `~/.config/opencode/opencode.json` (`modalities` text + image, `tool_call: true`, `headers["x-mtplx-client"]: "opencode"`, Inkling effort `variants`).

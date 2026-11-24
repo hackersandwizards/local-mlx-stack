@@ -27,7 +27,6 @@ Local MLX inference on this MacBook Pro (M3 Max, 64 GB unified memory, ~400 GB/s
 
 - **Zed** `~/.config/zed/settings.json` -> `language_models.openai_compatible.local-mlx` (`max_tokens: 716800`, full `capabilities` block).
 - **pi** `~/.pi/agent/models.json` -> `providers.local-mlx` with `compat.thinkingFormat: "qwen"` (sends `enable_thinking` + `reasoning_effort`), `headers["x-mtplx-client"]: "pi"`, and `~/.pi/agent/extensions/mtplx-session-headers.ts` (attaches `x-mtplx-session-id` for SSD SessionBank reuse across restarts).
-- **opencode** `~/.config/opencode/opencode.json` -> `provider.local-mlx` with `modalities` (text + image), `tool_call: true`, `headers["x-mtplx-client"]: "opencode"`, and Inkling effort `variants`.
 
 ## Conventions
 
