@@ -1,37 +1,36 @@
 # Measurements
 
-What was measured for Inkling 2 Mini on Ollama's MLX runner, and what was not. All runs on an M3 Max with 64 GB, Ollama 0.40.17-rc3, on 2026-11-20.
+What was measured for Inkling 2 Mini on this MacBook Pro (M3 Max, 64 GB unified memory), and what was not.
 
-## Size
+## Current setup (2026-11-24, MTPLX 2.13.3, Optimized-Speed)
 
-| | Value | How |
-|---|---|---|
-| On disk | 19 GB | `du` over the model store after `ollama pull`; the weights are 19.5 GB and the draft model 0.6 GB in the vendor's repository |
-| Loaded | 22 GB | `ollama ps`, context 262,144 tokens, the default Ollama picked on this machine |
-| Pull | 4.6 minutes | at 27 MB/s as `ollama pull` reported it |
+Pack: `Youssofal/Inkling-2-Mini-MTPLX-Optimized-Speed`, profile `sustained`, draft depth `3`.
 
-## Throughput
+| Metric | Value | How |
+| --- | --- | --- |
+| On disk | 17.2 GB | `mtplx models` |
+| Resident / peak memory | 16.0 GiB weights / 18.3 GB peak | `mtplx_stats.peak_memory_bytes` on short requests |
+| Context window | 716,800 tokens | `/v1/models` (`context_length`, machine-bound on 64 GiB) |
+| Model load time | 42.6 s | server startup log |
 
-Not settled. The prompt and the 300-token decode are those of `scripts/bench.sh`, thinking at the model's default `high`, one warmup request per round. Foreign CPU is the sum over every other process, in percent of one core, read before each run.
+### Initial throughput readings (not a quiet benchmark)
 
-| Round | Foreign CPU | Runs | tok/s |
-|---|---|---|---|
-| 1, runs 1-2 | 237, 42 | 2 | 25.4, 28.0 |
-| 1, run 3 | 81 | 1 | 13.6 |
-| 1, runs 4-8 | 899 to 1307 | 5 | 22.2, 17.4, 10.9, 11.8, 12.0 |
-| 2 | 302 to 1460 | 8 | 11.2, 11.5, 9.8, 11.8, 9.2, 9.3, 8.9, 15.8 (median 10.5) |
+Three runs with `scripts/bench.sh` (300 completion tokens, default thinking `high`) while OrbStack and `rspec` held ~200% foreign CPU on the machine:
 
-Another workload on the machine took 9 to 14 cores from the fourth run on. The slowdown follows that load, but run 3 was slow at low load too, so the cause is not shown. Two quiet runs rank nothing.
+| Run | Foreign CPU | End-to-end (`scripts/bench.sh`) | Decode (`mtplx_stats.decode_tok_s`) |
+| --- | --- | --- | --- |
+| 1 (alongside smoke requests) | ~200% | 66.8 tok/s (300 tok in 4.49 s) | ~80–81 tok/s on short smoke requests |
+| 2 (solo) | 206% | 61.1 tok/s (300 tok in 4.91 s) | — |
+| 3 (solo) | ~200% | 64.6 tok/s (300 tok in 4.64 s) | — |
 
-The speculative decoder was on in every run: the draft model loaded, and per request 23 to 42% of the drafted tokens were accepted, with 1.5 to 4.3 tokens drafted per step.
+A quiet multi-run measurement (low foreign CPU, 60 s cooldown) has not been run yet.
 
-## Against the previous setup
+## Historical reference
 
-Until 2026-11-20 this repository served two Qwen packs through MTPLX. Their figures, measured here on 2026-10-11 with MTPLX 2.12.2 by alternating both over three rounds of eight runs, foreign CPU 41 to 297%:
+Previous setups measured on the same M3 Max:
 
-| Model | Disk | tok/s |
-|---|---|---|
-| Qwen3.8 27B, 8-bit, MTPLX Optimized-Quality | 30.0 GB | 27 to 28 |
-| Qwen3.6 35B-A3B, 4-bit, MTPLX Optimized-Speed | 21.0 GB | 94 to 100 |
-
-No run alternated Inkling 2 Mini with either, so there is no ranking. The switch was made on the vendor's benchmark table and on the smaller footprint, with throughput assumed to be at least that of the 27B. A valid comparison alternates the configurations, cools down 60 s between them and records foreign CPU per run; the method and both old setups are in this file's history.
+| Date | Stack & model | Disk | Measured tok/s | Notes |
+| --- | --- | --- | --- | --- |
+| 2026-11-20 | Ollama `0.40.17-rc3` (MLX), `inkling-2-mini` (NVFP4/MXFP8) | 19 GB | 25.4, 28.0 (2 quiet runs); 8.9–22.2 under heavy load | 22 GB loaded, 262,144 context |
+| 2026-10-11 | MTPLX `2.12.2` (`turbo`), `qwen3.8-27b` Optimized-Quality (8-bit) | 30.0 GB | 27–28 | 3 rounds × 8 alternating runs, foreign CPU 41–297% |
+| 2026-10-11 | MTPLX `2.12.2` (`turbo`), `qwen3.6-35b` Optimized-Speed (4-bit) | 21.0 GB | 94–100 | Same alternating run |

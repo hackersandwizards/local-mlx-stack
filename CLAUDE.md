@@ -1,37 +1,39 @@
 # CLAUDE.md
 
-Local MLX inference on this MacBook Pro (M3 Max, 64 GB unified memory, ~400 GB/s). Path: `/Users/bstemmildt/dev/hackersandwizards/internal/local-mlx-stack`. Single backend, single model, OpenAI-compatible.
+Local MLX inference on this MacBook Pro (M3 Max, 64 GB unified memory, ~400 GB/s). Path: `/Users/bstemmildt/dev/hackersandwizards/internal/local-mlx-stack`. Single backend (MTPLX), single model, OpenAI-compatible.
 
 ## Model
 
-**`inkling-2-mini`** -- `thinkingmachines/Inkling-2-Mini` from Ollama's library (tag `26b-a5b-nvfp4`, MoE, 26.4B with 3.4B active, middle 12 layers looped three times, NVFP4 and MXFP8 as released, 19 GB on disk, 22 GB loaded). Text, image and tools. Ollama rejects any other requested id with `not found`.
+**`inkling-2-mini`** -- `Youssofal/Inkling-2-Mini-MTPLX-Optimized-Speed` (Thinking Machines' Inkling 2 Mini: MoE 26.4B, 3.4B active, middle 12 layers looped three times; official NVFP4 experts and embedding, 8-bit attention and output head, full vision tower, native DSpark draft head; 17.2 GB on disk, ~18.3 GB peak resident, 716,800-token context window on 64 GB). Text, image and tools.
+
+**MTPLX ignores the requested `model` id** and answers from whatever is loaded. Check `/v1/models` or the response's `model` field to verify what answered.
 
 ## Serving
 
-- The `justfile` holds the model and the port and exports `OLLAMA_HOST=127.0.0.1:8001`. Recipes: `serve | pull | bench | status | stop`.
-- `just serve` is `ollama serve` in the foreground. Ollama loads the model on the first request and unloads it after five idle minutes.
-- The model store is `~/.ollama/models`.
-- Ollama is installed by mise from `~/.config/mise/config.toml`, pinned to `0.40.17-rc3`: the model requires 0.40.17, and mise installs a release candidate only by exact version. Change the pin to `latest` once 0.40.17 is stable.
+- The `justfile` is the single source of truth for `MODEL`, `REPO`, `PORT` (`8001`), and `SSD_CACHE_MAX` (`20GB`). Recipes: `serve | pull | bench | status | stop | doctor`.
+- `just serve` runs `mtplx quickstart` in the foreground. MTPLX resolves the `inkling2_loop` backend, `sustained` profile, sampler (`temperature=1.0, top_p=1.0, top_k=0`), draft depth (`3`), reasoning parser (`qwen3`, default effort `high`), native tool prompt mode, and tokenizer template automatically.
+- Model store: `~/.mtplx/models` (`just pull` touches `.metadata_never_index` to keep Spotlight out).
+- Persistent SSD SessionBank cache: `~/.mtplx/session-bank`, capped at `20GB` via `--ssd-session-cache-max-size`.
+- MTPLX is installed by mise from `~/.config/mise/config.toml` as `"pypi:mtplx" = { version = "latest", extras = "server" }` (includes `llguidance` for `response_format: json_schema`).
 
-## Why this shape (2026-11-20, Inkling only)
+## Why this shape (2026-11-24, back to MTPLX for Inkling 2 Mini)
 
-- Replaced MTPLX and two Qwen packs (`qwen3.8-27b`, 27-28 tok/s; `qwen3.6-35b`, 94-100 tok/s) on the user's call: one model, chosen on the vendor's benchmarks against Qwen3.8-27B and on its footprint. Throughput was assumed, not measured: `docs/measurements.md` has two quiet runs at 25.4 and 28.0 tok/s and fourteen disturbed ones.
-- What was given up: the fast lane, video input, and a stable backend release.
-- Ollama's MLX runner was on that day the only Mac runtime that loaded this model with its draft model (the `mtp.safetensors` DSpark drafter). MTPLX had no loader for it, oMLX had Inkling 2 Small only, and mlx-lm's Inkling 2 pull request ([#2061](https://github.com/ml-explore/mlx-lm/pull/2061)) had no code for the looped layers.
-- With one model and Ollama owning pull, store, template and sampling, the registry, the serve and pull scripts and the doctor went. What remains is the port, the model name and a tok/s bench.
+- On 2026-11-20 this repo briefly moved to Ollama `0.40.17-rc3` because no other Mac runtime loaded Inkling 2 Mini with its DSpark drafter on launch day.
+- By 2026-11-24 MTPLX `2.13.3` shipped native Inkling 2 Mini Metal kernels, copy-lane speculation, and persistent SSD prompt caching (SessionBank). Ollama and its 19 GB store were removed in favor of this minimal single-model MTPLX setup.
+- `Optimized-Speed` (17.2 GB) was chosen over `Optimized-Quality` (20.2 GB) and `Bare-Speed` (16.0 GB): on Youssofal's model card it has no measurable loss penalty against the original weights (`-0.0007 ± 0.0031` nats, 96.5% top-1 agreement) while cutting RAM by 3 GB and raising decode speed (+14% average, +21% long answers on M5 Max).
+- Because MTPLX 2.13.3 carries Inkling's own sampler, template, reasoning parser, and pack resolution natively, no `models.sh`, `serve.sh`, `pull.sh`, or symlinks are needed.
 
 ## Clients
 
-- **Zed** `~/.config/zed/settings.json` -> `language_models.openai_compatible`. Validator needs the full `capabilities` block per model.
-- **pi** `~/.pi/agent/models.json` -> `compat.thinkingFormat: "openai"`.
-- **opencode** `~/.config/opencode/opencode.json`.
-- `ollama launch <client> --model inkling-2-mini` wires the clients Ollama knows.
+- **Zed** `~/.config/zed/settings.json` -> `language_models.openai_compatible.local-mlx` (`max_tokens: 716800`, full `capabilities` block).
+- **pi** `~/.pi/agent/models.json` -> `providers.local-mlx` with `compat.thinkingFormat: "qwen"` (sends `enable_thinking` + `reasoning_effort`), `headers["x-mtplx-client"]: "pi"`, and `~/.pi/agent/extensions/mtplx-session-headers.ts` (attaches `x-mtplx-session-id` for SSD SessionBank reuse across restarts).
+- **opencode** `~/.config/opencode/opencode.json` -> `provider.local-mlx` with `modalities` (text + image), `tool_call: true`, `headers["x-mtplx-client"]: "opencode"`, and Inkling effort `variants`.
 
 ## Conventions
 
-- Before recommending a model change, read the `justfile` for what is served and `ollama list` for what is on disk.
-- Benchmarks: `just bench`. Throughput swings with thermal state and foreign load, so a single run ranks nothing -- alternate the configurations under test, cool down 60 s between them, and log foreign CPU per run. On 2026-11-20 a second workload cut this model from 25-28 to 9-12 tok/s.
-- **Check what macOS is doing before benchmarking.** `mediaanalysisd`, `spotlightknowledged` and Spotlight importers wake up precisely when the Mac is on AC and looks idle, and they compete for the memory bandwidth this workload is bound by. `uptime` plus `ps -Ao %cpu,comm -r | head` before starting.
-- Read the installed `ollama serve --help` and `ollama show` before writing anything here about what a setting accepts, never a release note.
-- Thinking arrives as `reasoning`, not `reasoning_content`. `reasoning_effort: "none"` on `/v1` returned empty answers on 0.40.17-rc3, not explained; re-test after an upgrade.
-- **Verify before dismissing model names.** When the user names a model/version not in training data (the clock may be months ahead), run one `WebSearch` before pushing back -- confidently-wrong is worse than uncertain.
+- Before recommending a model or backend change, read the `justfile` for what is configured and `mtplx models` for what is on disk.
+- Verify any new pack with `just doctor` (`mtplx inspect` must report `tier: verified` and `runtime_compatibility: native`).
+- Backend CLI flags drift between MTPLX releases. Read the installed `mtplx quickstart --help` before writing anything here about what a flag accepts, never a release note.
+- Benchmarks: `just bench`. Check `uptime` and `ps -Ao %cpu,comm -r | head` first (`mediaanalysisd` / `spotlightknowledged` compete for memory bandwidth), alternate configurations with a 60 s cooldown, and log foreign CPU per run.
+- Thinking arrives in `reasoning_content`. `enable_thinking: false` turns thinking off completely; `reasoning_effort: "none"` still emits short reasoning tokens on Inkling 2 Mini.
+- **Verify before dismissing model names.** When the user names a model/version not in training data (the clock may be months ahead), run one web search before pushing back.

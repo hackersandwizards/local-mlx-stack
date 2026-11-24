@@ -1,33 +1,45 @@
 # Configuration
 
-What this repository sets for Ollama, and what it leaves to Ollama.
+What this repository sets for MTPLX, and what it leaves to MTPLX.
 
 ## What this repo owns
 
-Two values, both in the `justfile`: the model (`inkling-2-mini`) and the address (`127.0.0.1:8001`, passed as `OLLAMA_HOST`). The port is not Ollama's default 11434 because the client configs point at 8001.
+Four values in the `justfile`: the served id (`inkling-2-mini`), the pack repo (`Youssofal/Inkling-2-Mini-MTPLX-Optimized-Speed`), the loopback port (`8001`), and the SSD SessionBank cap (`20GB`).
 
-Ollama owns the rest. With `OLLAMA_HOST=127.0.0.1:8001` set:
+MTPLX owns everything else. Useful direct commands:
 
 | Task | Command |
-|---|---|
-| Download or update the model | `ollama pull inkling-2-mini` |
-| List the store | `ollama list` |
-| Template, capabilities, required version | `ollama show inkling-2-mini` |
-| What is loaded | `ollama ps` |
-| Wire up a client | `ollama launch <client> --model inkling-2-mini` |
+| --- | --- |
+| List cached packs | `mtplx models` |
+| Inspect a pack's contract | `mtplx inspect <path>` |
+| Reclaim orphaned SSD cache files | `mtplx gc --apply` |
+| Inspect live server health | `curl -s http://127.0.0.1:8001/health \| jq` |
+| Inspect live settings | `mtplx settings get --port 8001` |
 
-The model ships its own chat template and sampling, so no preset lives here.
+## Sampler, profile and draft depth
+
+MTPLX 2.13.3 sets these automatically from its `inkling2_loop` descriptor:
+
+- Sampler: `temperature = 1.0`, `top_p = 1.0`, `top_k = 0` (Thinking Machines' official sampler; client-sent overrides are respected).
+- Profile: `sustained` (recommended by the pack's `mtplx_runtime.json`).
+- Speculative decoding: native DSpark drafter at default depth `3` (range `1–7`), plus context-copy speculation.
 
 ## Thinking
 
-The model thinks at `high` unless a request says otherwise. `ollama show` lists the levels: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Clients set one per request with `reasoning_effort`.
+Default reasoning effort is `high`. Accepted `reasoning_effort` values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Thinking arrives in `reasoning_content` (both streaming and non-streaming).
 
-On 0.40.17-rc3, `reasoning_effort: "none"` on `/v1/chat/completions` returned an empty answer that still used every allowed token; it is not explained. `"think": false` on Ollama's own `/api/chat` answered without thinking. An unknown level is accepted without an error.
+To disable thinking completely, send `"enable_thinking": false`. Sending `"reasoning_effort": "none"` alone still produces brief reasoning tokens.
 
-## Context and memory
+## Context and SSD session cache
 
-Ollama picked a context of 262,144 tokens on this machine, at 22 GB loaded. `OLLAMA_CONTEXT_LENGTH` sets another; how much memory a smaller one saves is not measured here. `OLLAMA_KEEP_ALIVE` sets how long an idle model stays loaded (default five minutes); `just stop` unloads it at once.
+On this 64 GB M3 Max, MTPLX automatically resolves a machine-bound context window of `716,800` tokens (the model supports up to `1,048,576`, which would swap on 64 GB).
+
+The persistent SSD SessionBank cache (`~/.mtplx/session-bank`) is on by default and capped at `20GB` by `just serve` (`--ssd-session-cache-max-size 20GB`).
 
 ## Clients
 
-Clients are configured in `~/.config/zed/settings.json`, `~/.pi/agent/models.json`, and `~/.config/opencode/opencode.json`. pi takes `compat.thinkingFormat: "openai"`, which sends `reasoning_effort`.
+All three clients point at provider `local-mlx` (`http://127.0.0.1:8001/v1`, model `inkling-2-mini`):
+
+- **Zed:** `~/.config/zed/settings.json` (`max_tokens: 716800`, tools, images, parallel tool calls, interleaved reasoning).
+- **pi:** `~/.pi/agent/models.json` (`compat.thinkingFormat: "qwen"`, `headers["x-mtplx-client"]: "pi"`, `thinkingLevelMap` for `minimal`/`xhigh`/`max`) plus `~/.pi/agent/extensions/mtplx-session-headers.ts` to forward `x-mtplx-session-id` for SSD SessionBank reuse across restarts.
+- **opencode:** `~/.config/opencode/opencode.json` (`modalities` text + image, `tool_call: true`, `headers["x-mtplx-client"]: "opencode"`, Inkling effort `variants`).

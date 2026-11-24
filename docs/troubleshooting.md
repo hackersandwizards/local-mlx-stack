@@ -1,9 +1,10 @@
 # Troubleshooting
 
-- `listen tcp 127.0.0.1:8001: bind: address already in use`: something holds the port. `lsof -nP -iTCP:8001 -sTCP:LISTEN` names it.
-- `could not connect to a running Ollama instance`: `just pull`, `just status` and `just stop` talk to the server. Run `just serve` first.
-- `model 'inkling-2-mini' not found`: run `just pull`.
-- A pull or load that says the model requires a newer Ollama: the model needs 0.40.17. Check `ollama --version` against the mise entry in the README.
-- An empty answer with `reasoning_effort: "none"`: seen on 0.40.17-rc3, see [configuration](configuration.md#thinking). Use `low`.
-- Thinking missing in a client: Ollama sends it as `reasoning`, not `reasoning_content`.
-- Freeing disk: `ollama rm inkling-2-mini`. Space does not return immediately -- hourly Time Machine local snapshots pin the deleted blocks for about a day. `tmutil listlocalsnapshots /` shows them.
+- `Address already in use` on port 8001: check what holds it with `lsof -nP -iTCP:8001 -sTCP:LISTEN`. If it is MTPLX, run `just stop`.
+- `mtplx missing`: declared in `~/.config/mise/config.toml` as `"pypi:mtplx" = { version = "latest", extras = "server" }`; run `mise install`.
+- `response_format: json_schema` fails with missing `llguidance`: ensure `extras = "server"` is set on `pypi:mtplx` in `~/.config/mise/config.toml`, then run `mise install` and `just doctor`.
+- Model not pulled: run `just pull`. If a download drops with `Connection reset by peer`, re-run `just pull` — it resumes from partial shards.
+- Thinking still appears with `reasoning_effort: "none"`: Inkling 2 Mini still emits brief reasoning tokens unless `enable_thinking: false` is sent.
+- Freeing disk:
+  - Reclaim orphaned SSD SessionBank files: `mtplx gc --apply`.
+  - Remove cached packs: `mtplx models` shows paths under `~/.mtplx/models`. Space may stay pinned for up to a day by hourly Time Machine local snapshots (`tmutil listlocalsnapshots /`).
